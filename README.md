@@ -2,8 +2,14 @@
 
 A one-page commute dashboard on Västtrafik's open API (Planera Resa v4). Static, so it runs on GitHub Pages.
 
-- **Home** (default until 10:30): Källarbacken → Delsjömotet → Gårdatorget or Liseberg station
-- **Office** (default from 10:30): Gårdatorget or Liseberg station → Delsjömotet → Källarbacken
+- **Home** (default until 10:30): Källarbacken → Delsjömotet → Gårdatorget or Liseberg station,
+  rides leaving Källarbacken 06:00–09:30
+- **Office** (default from 10:30): Gårdatorget or Liseberg station → Delsjömotet → Källarbacken,
+  rides leaving 15:00–17:30
+
+Rides that have already left stay in the list, greyed out and marked *Departed*, with a *Now* line
+before the next one. "Load more" extends the window by 30 minutes. Once a window has passed for the
+day, the view shows the next two hours instead. The windows are `WINDOWS` at the top of the script.
 
 Each first bus is paired with the earliest bus from Delsjömotet you can still catch (2 minutes to
 change, `TRANSFER_MINUTES` in `index.html`). Direct buses are listed too. Realtime delays and

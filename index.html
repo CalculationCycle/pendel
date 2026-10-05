@@ -97,7 +97,6 @@ section h2 { font: 600 .78rem/1 var(--f-body); letter-spacing: .12em; text-trans
 .row .meta { font-size: .82rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row .end { text-align: right; font: 600 1.15rem/1.1 var(--f-display); }
 .row .end small { display: block; font: 500 .74rem/1.2 var(--f-body); color: var(--muted); }
-.row.gone { opacity: .45; }
 .row.cancelled .mins, .row.cancelled .end { text-decoration: line-through; color: var(--bad); }
 
 .late { color: var(--late); font-weight: 600; }
@@ -114,6 +113,35 @@ section h2 { font: 600 .78rem/1 var(--f-body); letter-spacing: .12em; text-trans
 .notice.error { border-color: var(--bad); color: var(--bad); }
 @media (prefers-reduced-motion: no-preference) { .hero, .list { transition: opacity .2s; } }
 .loading .hero, .loading .list { opacity: .6; }
+
+.row.gone { opacity: 1; background: color-mix(in srgb, var(--line) 35%, transparent); }
+.row.gone .end, .row.gone .chain { opacity: .5; }
+.row.gone .mins { color: var(--muted); }
+.row.gone .line { filter: grayscale(1); }
+.row.gone .mins { display: grid; justify-items: start; gap: 5px; }
+.pill-gone { display: inline-block; font: 600 .7rem/1 var(--f-body); letter-spacing: .06em; text-transform: uppercase; padding: 3px 6px; border-radius: 4px; background: var(--muted); color: var(--surface); }
+.now-divider { display: flex; align-items: center; gap: 10px; padding: 6px 14px; background: var(--surface); color: var(--accent); font: 600 .74rem/1 var(--f-body); letter-spacing: .1em; text-transform: uppercase; border-top: 2px solid var(--accent); }
+.more { margin-top: 10px; width: 100%; border: 1px dashed var(--line); background: var(--surface); color: var(--accent); font: 600 .9rem/1 var(--f-body); padding: 12px; border-radius: 10px; cursor: pointer; }
+.more:disabled { color: var(--muted); cursor: progress; }
+.more:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Shown while a Home/Office switch fetches its trips. */
+.loader { display: grid; gap: 18px; }
+.loader-board { background: var(--board); color: var(--board-ink); border-radius: 14px; padding: 18px; display: grid; gap: 14px; }
+.loader-title { font: 700 2rem/1 var(--f-display); }
+.loader-track { height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--board-dim) 30%, transparent); overflow: hidden; }
+.loader-track span { display: block; height: 100%; width: 35%; border-radius: 2px; background: var(--board-ink); }
+.skel-row { display: grid; grid-template-columns: 4.2rem 1fr 3.4rem; gap: 12px; align-items: center; padding: 14px; border-top: 1px solid var(--line); }
+.skel-row:first-child { border-top: 0; }
+.skel { height: .9rem; border-radius: 4px; background: var(--line); }
+.skel.big { height: 1.6rem; width: 2.6rem; }
+.skel.short { width: 55%; margin-top: 8px; }
+@media (prefers-reduced-motion: no-preference) {
+  .loader-track span { animation: slide 1.1s ease-in-out infinite; }
+  .skel { animation: pulse 1.2s ease-in-out infinite; }
+}
+@keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
+@keyframes pulse { 50% { opacity: .45; } }
 
 .setup { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: grid; gap: 12px; }
 .setup h2 { font: 600 1.05rem/1.2 var(--f-body); letter-spacing: 0; text-transform: none; color: var(--ink); margin: 0; }
@@ -153,15 +181,31 @@ section h2 { font: 600 .78rem/1 var(--f-body); letter-spacing: .12em; text-trans
     <div style="display:grid;gap:18px">
       <p class="route" id="route"></p>
       <div class="notice" id="notice" hidden></div>
-      <div class="hero" id="hero" hidden></div>
-      <section>
-        <h2>Trips</h2>
-        <div class="list" id="trips"><div class="empty">Loading departures…</div></div>
-      </section>
-      <section>
-        <h2>Departures per leg</h2>
-        <div class="boards" id="boards"></div>
-      </section>
+      <div class="loader" id="loader" role="status" aria-live="polite" hidden>
+        <div class="loader-board">
+          <div class="eyebrow" id="loader-label">Finding buses</div>
+          <div class="loader-title" id="loader-title">Loading…</div>
+          <div class="loader-track"><span></span></div>
+        </div>
+        <div class="list" aria-hidden="true">
+          <div class="skel-row"><div class="skel big"></div><div><div class="skel"></div><div class="skel short"></div></div><div class="skel"></div></div>
+          <div class="skel-row"><div class="skel big"></div><div><div class="skel"></div><div class="skel short"></div></div><div class="skel"></div></div>
+          <div class="skel-row"><div class="skel big"></div><div><div class="skel"></div><div class="skel short"></div></div><div class="skel"></div></div>
+          <div class="skel-row"><div class="skel big"></div><div><div class="skel"></div><div class="skel short"></div></div><div class="skel"></div></div>
+        </div>
+      </div>
+      <div id="content" style="display:grid;gap:18px" hidden>
+        <div class="hero" id="hero" hidden></div>
+        <section>
+          <h2 id="trips-title">Trips</h2>
+          <div class="list" id="trips"></div>
+          <button class="more" id="more" type="button">Load more</button>
+        </section>
+        <section>
+          <h2>Next departures per leg</h2>
+          <div class="boards" id="boards"></div>
+        </section>
+      </div>
       <div class="status">
         <span id="updated">–</span>
         <span class="right">
@@ -178,6 +222,9 @@ section h2 { font: 600 .78rem/1 var(--f-body); letter-spacing: .12em; text-trans
   // ---------- Settings ----------
   const API = 'https://ext-api.vasttrafik.se';
   const TRANSFER_MINUTES = 2;
+  // Which rides each view lists by default, by departure from the first stop. "Load more" adds 30 minutes.
+  const WINDOWS = { home: ['06:00', '09:30'], office: ['15:00', '17:30'] };
+  const MORE_MINUTES = 30;
   // Stop names are looked up once and the matched stop is remembered.
   // To pin a stop, replace its name with { gid: '9021014...', name: '...' }.
   const STOPS = {
@@ -271,14 +318,45 @@ section h2 { font: 600 .78rem/1 var(--f-body); letter-spacing: .12em; text-trans
   const ms = iso => new Date(iso).getTime();
   const minutesBetween = (a, b) => Math.round((ms(b) - ms(a)) / 60000);
 
-  async function directTrips(from, to, limit) {
-    const body = await vt('/journeys', { originGid: from.gid, destinationGid: to.gid, onlyDirectConnections: true, limit });
-    return (body.results || [])
-      .map(r => (r.tripLegs || []).filter(l => l.serviceJourney))
-      .filter(legs => legs.length === 1)
-      .map(legs => toLeg(legs[0]))
-      .filter(l => ms(l.from.time) >= Date.now() - 60_000)
+  // RFC 3339 in local time, e.g. 2026-10-05T06:00:00+02:00.
+  function localIso(d) {
+    const pad = n => String(Math.abs(n)).padStart(2, '0');
+    const off = -d.getTimezoneOffset();
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00`
+      + `${off >= 0 ? '+' : '-'}${pad(Math.trunc(off / 60))}:${pad(off % 60)}`;
+  }
+
+  // Direct (no change) trips leaving between start and end, fetched page by page.
+  async function tripsBetween(from, to, start, end) {
+    const seen = new Map();
+    let cursor = start;
+    for (let page = 0; page < 6 && cursor < end; page++) {
+      const body = await vt('/journeys', {
+        originGid: from.gid, destinationGid: to.gid, onlyDirectConnections: true,
+        dateTime: localIso(new Date(cursor)), limit: 20,
+      });
+      const legs = (body.results || [])
+        .map(r => (r.tripLegs || []).filter(l => l.serviceJourney))
+        .filter(ls => ls.length === 1)
+        .map(ls => toLeg(ls[0]));
+      if (!legs.length) break;
+      for (const l of legs) seen.set(`${l.journeyId}|${l.from.planned}`, l);
+      const last = Math.max(...legs.map(l => ms(l.from.planned)));
+      if (last < cursor) break;
+      cursor = last + 60_000;
+    }
+    return [...seen.values()]
+      .filter(l => ms(l.from.planned) >= start && ms(l.from.planned) < end)
       .sort((a, b) => ms(a.from.time) - ms(b.from.time));
+  }
+
+  // The default window today, stretched by "Load more". Once it has passed, show the next two hours instead.
+  function windowFor(m, extra) {
+    const at = hm => { const [h, min] = hm.split(':').map(Number); const d = new Date(); d.setHours(h, min, 0, 0); return d.getTime(); };
+    const [from, to] = WINDOWS[m];
+    const end = at(to) + extra * 60_000;
+    if (Date.now() <= end) return { start: at(from), end, rolling: false };
+    return { start: Date.now() - 15 * 60_000, end: Date.now() + (120 + extra) * 60_000, rolling: true };
   }
 
   // Each first bus, paired with the earliest bus from the transfer stop you can still make.
@@ -310,12 +388,16 @@ section h2 { font: 600 .78rem/1 var(--f-body); letter-spacing: .12em; text-trans
       && ms(o.arrives) <= ms(c.arrives) && ms(o.departs) > ms(c.departs)));
   }
 
-  async function commute(m) {
+  async function commute(m, extra) {
     const [home, transfer, ...offices] = await Promise.all([STOPS.home, STOPS.transfer, ...STOPS.office].map(resolveStop));
+    const win = windowFor(m, extra);
+    const { start, end } = win;
+    // Second legs may leave well after the last first leg.
+    const later = end + 90 * 60_000;
     const boards = [], conns = [];
     if (m === 'office') {
-      const [second, ...firsts] = await Promise.all([directTrips(transfer, home, 16), ...offices.map(o => directTrips(o, transfer, 8))]);
-      const directs = await Promise.all(offices.map(o => directTrips(o, home, 4).catch(() => [])));
+      const [second, ...firsts] = await Promise.all([tripsBetween(transfer, home, start, later), ...offices.map(o => tripsBetween(o, transfer, start, end))]);
+      const directs = await Promise.all(offices.map(o => tripsBetween(o, home, start, end).catch(() => [])));
       offices.forEach((o, i) => {
         boards.push({ from: o.name, to: transfer.name, trips: firsts[i] });
         conns.push(...pairUp(firsts[i], second, o.name, home.name));
@@ -323,8 +405,8 @@ section h2 { font: 600 .78rem/1 var(--f-body); letter-spacing: .12em; text-trans
       });
       boards.push({ from: transfer.name, to: home.name, trips: second });
     } else {
-      const [first, ...seconds] = await Promise.all([directTrips(home, transfer, 10), ...offices.map(o => directTrips(transfer, o, 16))]);
-      const directs = await Promise.all(offices.map(o => directTrips(home, o, 4).catch(() => [])));
+      const [first, ...seconds] = await Promise.all([tripsBetween(home, transfer, start, end), ...offices.map(o => tripsBetween(transfer, o, start, later))]);
+      const directs = await Promise.all(offices.map(o => tripsBetween(home, o, start, end).catch(() => [])));
       boards.push({ from: home.name, to: transfer.name, trips: first });
       offices.forEach((o, i) => {
         boards.push({ from: transfer.name, to: o.name, trips: seconds[i] });
@@ -333,10 +415,8 @@ section h2 { font: 600 .78rem/1 var(--f-body); letter-spacing: .12em; text-trans
       });
     }
     const connections = dropDominated(conns.map(summarise))
-      .filter(c => ms(c.departs) >= Date.now() - 60_000)
-      .sort((a, b) => ms(a.departs) - ms(b.departs) || ms(a.arrives) - ms(b.arrives))
-      .slice(0, 12);
-    return { generatedAt: new Date().toISOString(), stops: { home: home.name, transfer: transfer.name, office: offices.map(o => o.name) }, connections, boards };
+      .sort((a, b) => ms(a.departs) - ms(b.departs) || ms(a.arrives) - ms(b.arrives));
+    return { generatedAt: new Date().toISOString(), window: win, stops: { home: home.name, transfer: transfer.name, office: offices.map(o => o.name) }, connections, boards };
   }
 
   // ---------- Rendering ----------
@@ -368,17 +448,29 @@ section h2 { font: 600 .78rem/1 var(--f-body); letter-spacing: .12em; text-trans
 
   function render() {
     for (const b of document.querySelectorAll('.switch button')) b.setAttribute('aria-pressed', String(b.dataset.mode === mode));
-    if (!data) return;
+    $('loader').hidden = Boolean(data) || !busy;
+    $('content').hidden = !data;
+    $('route').hidden = !data;
+    if (!data) { renderLoader(); return; }
     const s = data.stops, offices = s.office.map(shortStop).join(' / ');
     $('route').innerHTML = mode === 'home'
       ? `<b>${esc(shortStop(s.home))}</b> → ${esc(shortStop(s.transfer))} → <b>${esc(offices)}</b>`
       : `<b>${esc(offices)}</b> → ${esc(shortStop(s.transfer))} → <b>${esc(shortStop(s.home))}</b>`;
     $('subtitle').textContent = demo ? 'Example data' : 'Västtrafik, live';
     renderHero(data.connections.find(c => !c.legs.some(l => l.cancelled) && minsUntil(c.departs) >= 0));
-    renderTrips(data.connections);
+    renderTrips(data.connections, data.window);
     renderBoards(data.boards);
     const age = Math.round((Date.now() - ms(data.generatedAt)) / 60000);
     $('updated').textContent = `Updated ${hhmm(data.generatedAt)}${age >= 2 ? ` (${age} min ago)` : ''}`;
+  }
+
+  function renderLoader() {
+    const name = s => shortStop(typeof s === 'object' ? s.name : s);
+    const from = mode === 'home' ? name(STOPS.home) : STOPS.office.map(name).join(' and ');
+    const to = mode === 'home' ? STOPS.office.map(name).join(' / ') : name(STOPS.home);
+    $('updated').textContent = '';
+    $('loader-label').textContent = `${mode === 'home' ? 'Home' : 'Office'} · finding buses`;
+    $('loader-title').textContent = `${from} → ${to}`;
   }
 
   function renderHero(c) {
@@ -403,29 +495,41 @@ section h2 { font: 600 .78rem/1 var(--f-body); letter-spacing: .12em; text-trans
       <div class="hero-foot"><span>${change}</span><span>Arrives ${hhmm(c.arrives)} · ${c.durationMinutes} min</span></div>`;
   }
 
-  function renderTrips(conns) {
-    if (!conns.length) { $('trips').innerHTML = '<div class="empty">No trips found in the next while.</div>'; return; }
-    $('trips').innerHTML = conns.map(c => {
+  const departed = c => ms(c.departs) < Date.now();
+
+  function renderTrips(conns, win) {
+    const t = n => hhmm(new Date(n).toISOString());
+    $('trips-title').textContent = win.rolling ? `Trips · next ${Math.round((win.end - Date.now()) / 3600000 * 2) / 2} h` : `Trips · ${t(win.start)}–${t(win.end)}`;
+    $('more').textContent = `Load more · until ${t(win.end + MORE_MINUTES * 60_000)}`;
+    if (!conns.length) { $('trips').innerHTML = '<div class="empty">No trips in this time window.</div>'; return; }
+    const firstUpcoming = conns.findIndex(c => !departed(c));
+    $('trips').innerHTML = conns.map((c, i) => {
       const cancelled = c.legs.some(l => l.cancelled);
+      const gone = departed(c);
       const change = c.transferMinutes == null ? 'direct'
         : `<span class="${c.transferMinutes <= 3 ? 'tight' : ''}">${c.transferMinutes} min change</span>`;
-      return `
-        <div class="row${cancelled ? ' cancelled' : ''}${minsUntil(c.departs) < 0 ? ' gone' : ''}">
-          ${minsCell(c.departs)}
+      const divider = i === firstUpcoming && i > 0 ? `<div class="now-divider"><span>Now ${t(Date.now())}</span></div>` : '';
+      const status = cancelled ? '<span class="cancel">cancelled</span>' : gone ? 'departed' : delayText(c.legs[0].from);
+      return `${divider}
+        <div class="row${cancelled ? ' cancelled' : ''}${gone ? ' gone' : ''}">
+          ${gone ? `<div class="mins clock">${hhmm(c.departs)}<span class="pill-gone">Departed</span></div>` : minsCell(c.departs)}
           <div class="body">
             <div class="chain">${c.legs.map(lineBadge).join('<span class="arrow">→</span>')}<span>${change}</span></div>
-            <div class="meta">${hhmm(c.departs)} ${esc(shortStop(c.legs[0].from.stop))} · ${cancelled ? '<span class="cancel">cancelled</span>' : delayText(c.legs[0].from)}</div>
+            <div class="meta">${hhmm(c.departs)} ${esc(shortStop(c.legs[0].from.stop))} · ${status}</div>
           </div>
           <div class="end">${hhmm(c.arrives)}<small>${esc(shortStop(c.destination))}</small></div>
         </div>`;
     }).join('');
+    if (firstUpcoming === -1 && conns.length) $('trips').insertAdjacentHTML('beforeend', `<div class="now-divider"><span>Now ${t(Date.now())}</span></div>`);
   }
+
+  const upcoming = trips => trips.filter(t => ms(t.from.time) >= Date.now() - 60_000);
 
   function renderBoards(boards) {
     $('boards').innerHTML = boards.map(b => `
       <div>
         <h2>${esc(shortStop(b.from))} → ${esc(shortStop(b.to))}</h2>
-        <div class="list">${b.trips.length ? b.trips.slice(0, 6).map(t => `
+        <div class="list">${upcoming(b.trips).length ? upcoming(b.trips).slice(0, 6).map(t => `
           <div class="row${t.cancelled ? ' cancelled' : ''}">
             ${minsCell(t.from.time)}
             <div class="body">
@@ -448,14 +552,18 @@ section h2 { font: 600 .78rem/1 var(--f-body); letter-spacing: .12em; text-trans
     if (message) { p.textContent = message; p.style.color = 'var(--bad)'; }
   }
 
-  let loading = 0;
-  async function load() {
+  let loading = 0, busy = false, extra = 0;
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  // minMs keeps the loading screen up long enough to read instead of flashing.
+  async function load(minMs = 0) {
     if (!demo && !store.get('creds')) { showSetup(); return; }
     $('setup').hidden = true; $('dash').hidden = false;
     const ticket = ++loading;
+    busy = true;
     document.body.classList.add('loading');
+    render();
     try {
-      const result = demo ? demoData(mode) : await commute(mode);
+      const [result] = await Promise.all([demo ? demoData(mode) : commute(mode, extra), wait(minMs)]);
       if (ticket !== loading) return;
       data = result;
       $('notice').hidden = true;
@@ -468,7 +576,7 @@ section h2 { font: 600 .78rem/1 var(--f-body); letter-spacing: .12em; text-trans
         : `Could not load departures: ${err.message}`;
       n.classList.add('error'); n.hidden = false;
     } finally {
-      if (ticket === loading) document.body.classList.remove('loading');
+      if (ticket === loading) { busy = false; document.body.classList.remove('loading'); }
       render();
     }
   }
@@ -478,13 +586,19 @@ section h2 { font: 600 .78rem/1 var(--f-body); letter-spacing: .12em; text-trans
     store.set('creds', { id: $('client-id').value.trim(), secret: $('client-secret').value.trim() });
     token = null; demo = false; load();
   });
-  $('try-demo').addEventListener('click', () => { demo = true; load(); });
+  $('try-demo').addEventListener('click', () => { demo = true; data = null; load(500); });
   $('forget').addEventListener('click', () => { store.del('creds'); store.del('stops'); token = null; demo = false; data = null; showSetup(); });
-  $('refresh').addEventListener('click', load);
+  $('refresh').addEventListener('click', () => load());
+  $('more').addEventListener('click', async () => {
+    extra += MORE_MINUTES;
+    $('more').disabled = true; $('more').textContent = 'Loading…';
+    await load();
+    $('more').disabled = false; render();
+  });
   for (const b of document.querySelectorAll('.switch button')) {
     b.addEventListener('click', () => {
       if (mode === b.dataset.mode) return;
-      mode = b.dataset.mode; data = null; render(); load();
+      mode = b.dataset.mode; extra = 0; data = null; $('notice').hidden = true; load(500);
     });
   }
 
@@ -499,25 +613,28 @@ section h2 { font: 600 .78rem/1 var(--f-body); letter-spacing: .12em; text-trans
     const H = 'Källarbacken, Göteborg', T = 'Delsjömotet, Göteborg', G = 'Gårdatorget, Göteborg', L = 'Liseberg station, Göteborg';
     const conn = (origin, destination, legs) => summarise({ origin, destination, legs });
     const stops = { home: H, transfer: T, office: [G, L] };
+    const window = { start: Date.now() - 40 * 60000, end: Date.now() + (60 + extra) * 60000, rolling: false };
     if (m === 'office') {
       const a1 = leg('50', '#2f6fb2', G, T, 4, 6), a2 = leg('513', '#c0392b', L, T, 7, 8, 1), a3 = leg('50', '#2f6fb2', G, T, 14, 6);
       const b1 = leg('514', '#7d3c98', T, H, 13, 5), b2 = leg('514', '#7d3c98', T, H, 28, 5);
-      return { generatedAt: new Date().toISOString(), stops,
-        connections: [conn(G, H, [a1, b1]), conn(L, H, [a2, b1]), conn(G, H, [a3, b2])],
+      const p1 = leg('50', '#2f6fb2', G, T, -11, 6), q1 = leg('514', '#7d3c98', T, H, -2, 5);
+      return { generatedAt: new Date().toISOString(), stops, window,
+        connections: [conn(G, H, [p1, q1]), conn(G, H, [a1, b1]), conn(L, H, [a2, b1]), conn(G, H, [a3, b2])],
         boards: [{ from: G, to: T, trips: [a1, a3] }, { from: L, to: T, trips: [a2] }, { from: T, to: H, trips: [b1, b2] }] };
     }
     const a1 = leg('514', '#7d3c98', H, T, 5, 5), a2 = leg('514', '#7d3c98', H, T, 20, 5, 2);
     const g1 = leg('50', '#2f6fb2', T, G, 13, 7), l1 = leg('513', '#c0392b', T, L, 14, 9), g2 = leg('50', '#2f6fb2', T, G, 29, 7);
-    return { generatedAt: new Date().toISOString(), stops,
-      connections: [conn(H, G, [a1, g1]), conn(H, L, [a1, l1]), conn(H, G, [a2, g2])],
+    const p1 = leg('514', '#7d3c98', H, T, -10, 5), q1 = leg('50', '#2f6fb2', T, G, -3, 7);
+    return { generatedAt: new Date().toISOString(), stops, window,
+      connections: [conn(H, G, [p1, q1]), conn(H, G, [a1, g1]), conn(H, L, [a1, l1]), conn(H, G, [a2, g2])],
       boards: [{ from: H, to: T, trips: [a1, a2] }, { from: T, to: G, trips: [g1, g2] }, { from: T, to: L, trips: [l1] }] };
   }
 
   render();
   load();
-  setInterval(() => { if (!document.hidden && !$('dash').hidden) load(); }, 30_000);
+  setInterval(() => { if (!document.hidden && !$('dash').hidden && !busy) load(); }, 30_000);
   setInterval(render, 15_000);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && !$('dash').hidden) load(); });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && !$('dash').hidden && !busy) load(); });
 })();
 </script>
 </body>
