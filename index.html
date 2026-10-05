@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#f2f4f1">
+<title>Pendel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Public+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a single phone-width column; the next catchable trip as a departure-board hero, then the trip list, then the raw leg boards. */
+:root {
+  --bg: #eef1ee;
+  --surface: #ffffff;
+  --ink: #17242a;
+  --muted: #5d6c70;
+  --line: #d5dcd8;
+  --accent: #1f6f78;
+  --accent-ink: #ffffff;
+  --board: #17242a;
+  --board-ink: #f3e9c6;
+  --board-dim: #9fb0ad;
+  --ok: #2d7a46;
+  --late: #b4561b;
+  --bad: #b3261e;
+  --f-display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --f-body: "Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1719; --surface: #172226; --ink: #e4ebe8; --muted: #93a4a3; --line: #2a383b;
+    --accent: #5fb3b8; --accent-ink: #0f1719; --board: #0a1012; --board-ink: #f3dc8f; --board-dim: #7d8f8d;
+    --ok: #69c08a; --late: #e59456; --bad: #ef7a72; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1719; --surface: #172226; --ink: #e4ebe8; --muted: #93a4a3; --line: #2a383b;
+  --accent: #5fb3b8; --accent-ink: #0f1719; --board: #0a1012; --board-ink: #f3dc8f; --board-dim: #7d8f8d;
+  --ok: #69c08a; --late: #e59456; --bad: #ef7a72; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--ink); font: 15px/1.45 var(--f-body);
+  padding-inline: 16px; padding-block: calc(env(safe-area-inset-top, 0px) + 14px) calc(env(safe-area-inset-bottom, 0px) + 32px);
+  font-variant-numeric: tabular-nums;
+}
+main { max-width: 34rem; margin: 0 auto; display: grid; gap: 18px; }
+[hidden] { display: none !important; }
+
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.brand { font: 700 1.6rem/1 var(--f-display); letter-spacing: .02em; text-transform: uppercase; margin: 0; }
+.brand small { display: block; font: 500 .78rem/1.3 var(--f-body); letter-spacing: 0; text-transform: none; color: var(--muted); }
+
+.switch { display: inline-flex; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 3px; }
+.switch button {
+  border: 0; background: transparent; color: var(--muted); font: 600 .92rem/1 var(--f-body);
+  padding: 9px 16px; border-radius: 999px; cursor: pointer;
+}
+.switch button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.switch button:focus-visible, .refresh:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.route { margin: 0; color: var(--muted); font-size: .9rem; }
+.route b { color: var(--ink); font-weight: 600; }
+
+/* Hero: the next trip worth leaving for. */
+.hero { background: var(--board); color: var(--board-ink); border-radius: 14px; padding: 18px 18px 16px; display: grid; gap: 12px; }
+.hero-top .eyebrow:first-child { white-space: normal; }
+.hero-top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.eyebrow { white-space: nowrap; font: 600 .74rem/1 var(--f-body); letter-spacing: .12em; text-transform: uppercase; color: var(--board-dim); }
+.countdown { font: 700 4.4rem/0.9 var(--f-display); letter-spacing: -.01em; }
+.countdown span { font-size: 1.6rem; font-weight: 600; margin-left: 4px; color: var(--board-dim); }
+.hero-legs { display: grid; gap: 8px; }
+.hero-leg { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; min-width: 0; }
+.hero-leg .where { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--board-ink); }
+.hero-leg .where small { color: var(--board-dim); }
+.hero-leg .t { font: 600 1.3rem/1 var(--f-display); }
+.hero-foot { display: flex; justify-content: space-between; color: var(--board-dim); font-size: .85rem; border-top: 1px solid color-mix(in srgb, var(--board-dim) 30%, transparent); padding-top: 10px; gap: 10px; flex-wrap: wrap; }
+
+.line {
+  display: inline-grid; place-items: center; min-width: 2.6rem; height: 1.75rem; padding: 0 6px; border-radius: 6px;
+  font: 700 1.05rem/1 var(--f-display); letter-spacing: .02em;
+  background: var(--accent); color: var(--accent-ink); border: 1px solid transparent;
+}
+
+section h2 { font: 600 .78rem/1 var(--f-body); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+.list { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.row { display: grid; grid-template-columns: 4.2rem 1fr auto; gap: 12px; align-items: center; padding: 11px 14px; border-top: 1px solid var(--line); }
+.row:first-child { border-top: 0; }
+.row .mins { font: 700 1.7rem/1 var(--f-display); }
+.row .mins.clock { font-size: 1.3rem; }
+.row .mins small { font-size: .85rem; font-weight: 600; color: var(--muted); margin-left: 2px; }
+.row .body { min-width: 0; display: grid; gap: 4px; }
+.row .chain { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: .88rem; color: var(--muted); }
+.row .chain .arrow { color: var(--muted); }
+.row .meta { font-size: .82rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .end { text-align: right; font: 600 1.15rem/1.1 var(--f-display); }
+.row .end small { display: block; font: 500 .74rem/1.2 var(--f-body); color: var(--muted); }
+.row.gone { opacity: .45; }
+.row.cancelled .mins, .row.cancelled .end { text-decoration: line-through; color: var(--bad); }
+
+.late { color: var(--late); font-weight: 600; }
+.ontime { color: var(--ok); }
+.cancel { color: var(--bad); font-weight: 600; }
+.tight { color: var(--late); }
+
+.boards { display: grid; gap: 16px; }
+.empty { padding: 14px; color: var(--muted); font-size: .9rem; }
+
+.status { display: flex; justify-content: space-between; align-items: center; gap: 10px; color: var(--muted); font-size: .82rem; }
+.refresh { background: none; border: 1px solid var(--line); color: var(--ink); border-radius: 8px; padding: 6px 12px; font: 500 .82rem/1 var(--f-body); cursor: pointer; }
+.notice { border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 10px 14px; font-size: .88rem; }
+.notice.error { border-color: var(--bad); color: var(--bad); }
+@media (prefers-reduced-motion: no-preference) { .hero, .list { transition: opacity .2s; } }
+.loading .hero, .loading .list { opacity: .6; }
+
+.setup { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: grid; gap: 12px; }
+.setup h2 { font: 600 1.05rem/1.2 var(--f-body); letter-spacing: 0; text-transform: none; color: var(--ink); margin: 0; }
+.setup p { margin: 0; color: var(--muted); font-size: .9rem; }
+.setup label { display: grid; gap: 4px; font-size: .85rem; font-weight: 600; }
+.setup input { font: 400 .95rem/1.2 var(--f-body); padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); width: 100%; }
+.setup input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.setup .actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.btn { border: 0; background: var(--accent); color: var(--accent-ink); font: 600 .92rem/1 var(--f-body); padding: 11px 16px; border-radius: 8px; cursor: pointer; }
+.btn.ghost { background: none; color: var(--accent); border: 1px solid var(--line); }
+.linkish { background: none; border: 0; color: var(--muted); font: 500 .82rem/1 var(--f-body); text-decoration: underline; cursor: pointer; padding: 6px 0; }
+.status .right { display: flex; gap: 10px; align-items: center; }
+</style>
+</head>
+<body>
+<main id="app">
+  <header>
+    <h1 class="brand">Pendel<small id="subtitle">Västtrafik, live</small></h1>
+    <div class="switch" role="group" aria-label="Where are you?">
+      <button id="btn-home" type="button" data-mode="home" aria-pressed="false">Home</button>
+      <button id="btn-office" type="button" data-mode="office" aria-pressed="false">Office</button>
+    </div>
+  </header>
+
+  <form class="setup" id="setup" hidden>
+    <h2>Connect to Västtrafik</h2>
+    <p>Create an application at developer.vasttrafik.se, subscribe it to Planera Resa v4, and paste its key and secret here. They are stored only in this browser.</p>
+    <label for="client-id">Key (client id)<input id="client-id" autocomplete="off" spellcheck="false" required></label>
+    <label for="client-secret">Secret<input id="client-secret" type="password" autocomplete="off" spellcheck="false" required></label>
+    <div class="actions">
+      <button class="btn" type="submit">Save and load</button>
+      <button class="btn ghost" id="try-demo" type="button">Show example data</button>
+    </div>
+  </form>
+
+  <div id="dash" hidden>
+    <div style="display:grid;gap:18px">
+      <p class="route" id="route"></p>
+      <div class="notice" id="notice" hidden></div>
+      <div class="hero" id="hero" hidden></div>
+      <section>
+        <h2>Trips</h2>
+        <div class="list" id="trips"><div class="empty">Loading departures…</div></div>
+      </section>
+      <section>
+        <h2>Departures per leg</h2>
+        <div class="boards" id="boards"></div>
+      </section>
+      <div class="status">
+        <span id="updated">–</span>
+        <span class="right">
+          <button class="linkish" id="forget" type="button">Change key</button>
+          <button class="refresh" id="refresh" type="button">Refresh</button>
+        </span>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+(() => {
+  // ---------- Settings ----------
+  const API = 'https://ext-api.vasttrafik.se';
+  const TRANSFER_MINUTES = 2;
+  // Stop names are looked up once and the matched stop is remembered.
+  // To pin a stop, replace its name with { gid: '9021014...', name: '...' }.
+  const STOPS = {
+    home: 'Källarbacken',
+    transfer: 'Delsjömotet',
+    office: ['Gårdatorget', 'Liseberg station'],
+  };
+
+  const $ = id => document.getElementById(id);
+  const store = {
+    get(k) { try { return JSON.parse(localStorage.getItem('pendel.' + k)); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem('pendel.' + k, JSON.stringify(v)); } catch {} },
+    del(k) { try { localStorage.removeItem('pendel.' + k); } catch {} },
+  };
+
+  // On load: home until 10:30, office after. The toggle switches for this visit only.
+  function defaultMode() {
+    const now = new Date();
+    return now.getHours() * 60 + now.getMinutes() < 10 * 60 + 30 ? 'home' : 'office';
+  }
+  let mode = defaultMode();
+  let data = null;
+  let demo = false;
+
+  // ---------- Västtrafik client ----------
+  let token = null;
+
+  async function getToken() {
+    if (token && token.expiresAt > Date.now() + 60_000) return token.value;
+    const creds = store.get('creds');
+    if (!creds) throw new NeedsSetup();
+    const res = await fetch(`${API}/token`, {
+      method: 'POST',
+      headers: { Authorization: 'Basic ' + btoa(`${creds.id}:${creds.secret}`), 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'grant_type=client_credentials',
+    });
+    if (res.status === 400 || res.status === 401) throw new NeedsSetup('Västtrafik did not accept that key and secret.');
+    if (!res.ok) throw new Error(`Västtrafik answered ${res.status} when logging in.`);
+    const body = await res.json();
+    token = { value: body.access_token, expiresAt: Date.now() + (body.expires_in || 3600) * 1000 };
+    return token.value;
+  }
+  class NeedsSetup extends Error {}
+
+  async function vt(path, params) {
+    const url = new URL(`${API}/pr/v4${path}`);
+    for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v));
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${await getToken()}`, Accept: 'application/json' } });
+      if (res.status === 401 && attempt === 0) { token = null; continue; }
+      if (!res.ok) throw new Error(`Västtrafik answered ${res.status} for ${path}.`);
+      return res.json();
+    }
+  }
+
+  async function resolveStop(stop) {
+    if (typeof stop === 'object') return stop;
+    const cached = store.get('stops') || {};
+    if (cached[stop]) return cached[stop];
+    const body = await vt('/locations/by-text', { q: stop, types: 'stoparea', limit: 5 });
+    const hit = (body.results || []).find(r => r.gid);
+    if (!hit) throw new Error(`No stop called "${stop}" was found.`);
+    const found = { gid: hit.gid, name: hit.name };
+    store.set('stops', { ...store.get('stops'), [stop]: found });
+    return found;
+  }
+
+  // ---------- Trips ----------
+  const call = p => ({
+    planned: p.plannedTime,
+    time: p.estimatedOtherwisePlannedTime || p.estimatedTime || p.plannedTime,
+    realtime: Boolean(p.estimatedTime),
+    stop: p.stopPoint?.name || p.stopPoint?.stopArea?.name || null,
+    platform: p.stopPoint?.platform || null,
+  });
+
+  function toLeg(l) {
+    const sj = l.serviceJourney || {}, line = sj.line || {};
+    return {
+      journeyId: sj.gid || null,
+      line: line.shortName || line.designation || line.name || '?',
+      lineName: line.name || null,
+      colors: { bg: line.backgroundColor || null, fg: line.foregroundColor || null, border: line.borderColor || null },
+      direction: sj.direction || null,
+      cancelled: Boolean(l.isCancelled || l.isPartCancelled),
+      from: call(l.origin),
+      to: call(l.destination),
+    };
+  }
+
+  const ms = iso => new Date(iso).getTime();
+  const minutesBetween = (a, b) => Math.round((ms(b) - ms(a)) / 60000);
+
+  async function directTrips(from, to, limit) {
+    const body = await vt('/journeys', { originGid: from.gid, destinationGid: to.gid, onlyDirectConnections: true, limit });
+    return (body.results || [])
+      .map(r => (r.tripLegs || []).filter(l => l.serviceJourney))
+      .filter(legs => legs.length === 1)
+      .map(legs => toLeg(legs[0]))
+      .filter(l => ms(l.from.time) >= Date.now() - 60_000)
+      .sort((a, b) => ms(a.from.time) - ms(b.from.time));
+  }
+
+  // Each first bus, paired with the earliest bus from the transfer stop you can still make.
+  function pairUp(firsts, seconds, origin, destination) {
+    const out = [];
+    for (const a of firsts) {
+      if (a.cancelled) continue;
+      const b = seconds.find(s => !s.cancelled && minutesBetween(a.to.time, s.from.time) >= TRANSFER_MINUTES);
+      if (!b || (b.journeyId && b.journeyId === a.journeyId)) continue;
+      out.push({ origin, destination, legs: [a, b] });
+    }
+    return out;
+  }
+
+  function summarise(c) {
+    const first = c.legs[0], last = c.legs[c.legs.length - 1];
+    return {
+      ...c,
+      transferMinutes: c.legs.length > 1 ? minutesBetween(first.to.time, c.legs[1].from.time) : null,
+      departs: first.from.time, arrives: last.to.time,
+      durationMinutes: minutesBetween(first.from.time, last.to.time),
+    };
+  }
+
+  // Of trips on the same route reaching the destination at the same time or later,
+  // keep only the one that leaves last: there is no point waiting longer at the transfer.
+  function dropDominated(conns) {
+    return conns.filter(c => !conns.some(o => o !== c && o.origin === c.origin && o.destination === c.destination
+      && ms(o.arrives) <= ms(c.arrives) && ms(o.departs) > ms(c.departs)));
+  }
+
+  async function commute(m) {
+    const [home, transfer, ...offices] = await Promise.all([STOPS.home, STOPS.transfer, ...STOPS.office].map(resolveStop));
+    const boards = [], conns = [];
+    if (m === 'office') {
+      const [second, ...firsts] = await Promise.all([directTrips(transfer, home, 16), ...offices.map(o => directTrips(o, transfer, 8))]);
+      const directs = await Promise.all(offices.map(o => directTrips(o, home, 4).catch(() => [])));
+      offices.forEach((o, i) => {
+        boards.push({ from: o.name, to: transfer.name, trips: firsts[i] });
+        conns.push(...pairUp(firsts[i], second, o.name, home.name));
+        conns.push(...directs[i].map(d => ({ origin: o.name, destination: home.name, legs: [d] })));
+      });
+      boards.push({ from: transfer.name, to: home.name, trips: second });
+    } else {
+      const [first, ...seconds] = await Promise.all([directTrips(home, transfer, 10), ...offices.map(o => directTrips(transfer, o, 16))]);
+      const directs = await Promise.all(offices.map(o => directTrips(home, o, 4).catch(() => [])));
+      boards.push({ from: home.name, to: transfer.name, trips: first });
+      offices.forEach((o, i) => {
+        boards.push({ from: transfer.name, to: o.name, trips: seconds[i] });
+        conns.push(...pairUp(first, seconds[i], home.name, o.name));
+        conns.push(...directs[i].map(d => ({ origin: home.name, destination: o.name, legs: [d] })));
+      });
+    }
+    const connections = dropDominated(conns.map(summarise))
+      .filter(c => ms(c.departs) >= Date.now() - 60_000)
+      .sort((a, b) => ms(a.departs) - ms(b.departs) || ms(a.arrives) - ms(b.arrives))
+      .slice(0, 12);
+    return { generatedAt: new Date().toISOString(), stops: { home: home.name, transfer: transfer.name, office: offices.map(o => o.name) }, connections, boards };
+  }
+
+  // ---------- Rendering ----------
+  const hhmm = iso => new Date(iso).toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' });
+  const minsUntil = iso => Math.floor((ms(iso) - Date.now()) / 60000);
+  const delay = c => c.realtime && c.planned ? Math.round((ms(c.time) - ms(c.planned)) / 60000) : 0;
+  const esc = s => String(s ?? '').replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+  const shortStop = s => String(s || '').replace(/,\s*[^,]+$/, '');
+
+  function lineBadge(leg) {
+    const c = leg.colors || {};
+    const style = c.bg ? `background:${esc(c.bg)};color:${esc(c.fg || '#fff')};border-color:${esc(c.border || c.bg)}` : '';
+    return `<span class="line" style="${style}" title="${esc(leg.lineName || leg.line)}">${esc(leg.line)}</span>`;
+  }
+  function delayText(c) {
+    const d = delay(c);
+    if (!c.realtime) return '<span>scheduled</span>';
+    if (d > 0) return `<span class="late">+${d} min</span>`;
+    if (d < 0) return `<span class="ontime">${d} min</span>`;
+    return '<span class="ontime">on time</span>';
+  }
+  function countdown(iso) {
+    const m = minsUntil(iso);
+    if (m <= 0) return 'Now';
+    if (m >= 60) return hhmm(iso);
+    return `${m}<small>min</small>`;
+  }
+  const minsCell = iso => `<div class="mins${minsUntil(iso) >= 60 ? ' clock' : ''}">${countdown(iso)}</div>`;
+
+  function render() {
+    for (const b of document.querySelectorAll('.switch button')) b.setAttribute('aria-pressed', String(b.dataset.mode === mode));
+    if (!data) return;
+    const s = data.stops, offices = s.office.map(shortStop).join(' / ');
+    $('route').innerHTML = mode === 'home'
+      ? `<b>${esc(shortStop(s.home))}</b> → ${esc(shortStop(s.transfer))} → <b>${esc(offices)}</b>`
+      : `<b>${esc(offices)}</b> → ${esc(shortStop(s.transfer))} → <b>${esc(shortStop(s.home))}</b>`;
+    $('subtitle').textContent = demo ? 'Example data' : 'Västtrafik, live';
+    renderHero(data.connections.find(c => !c.legs.some(l => l.cancelled) && minsUntil(c.departs) >= 0));
+    renderTrips(data.connections);
+    renderBoards(data.boards);
+    const age = Math.round((Date.now() - ms(data.generatedAt)) / 60000);
+    $('updated').textContent = `Updated ${hhmm(data.generatedAt)}${age >= 2 ? ` (${age} min ago)` : ''}`;
+  }
+
+  function renderHero(c) {
+    const hero = $('hero');
+    hero.hidden = !c;
+    if (!c) return;
+    const m = minsUntil(c.departs);
+    const legs = c.legs.map(l => `
+      <div class="hero-leg">
+        ${lineBadge(l)}
+        <div class="where">${esc(shortStop(l.from.stop))}${l.from.platform ? ` <small>stop ${esc(l.from.platform)}</small>` : ''} → ${esc(shortStop(l.to.stop))}</div>
+        <div class="t">${hhmm(l.from.time)}</div>
+      </div>`).join('');
+    const change = c.transferMinutes == null ? 'Direct, no change' : `${c.transferMinutes} min to change at ${esc(shortStop(data.stops.transfer))}`;
+    hero.innerHTML = `
+      <div class="hero-top">
+        <div class="eyebrow">Next trip · from ${esc(shortStop(c.legs[0].from.stop))}</div>
+        <div class="eyebrow">${delayText(c.legs[0].from)}</div>
+      </div>
+      <div class="countdown">${m <= 0 ? 'Now' : m >= 60 ? hhmm(c.departs) : `${m}<span>min</span>`}</div>
+      <div class="hero-legs">${legs}</div>
+      <div class="hero-foot"><span>${change}</span><span>Arrives ${hhmm(c.arrives)} · ${c.durationMinutes} min</span></div>`;
+  }
+
+  function renderTrips(conns) {
+    if (!conns.length) { $('trips').innerHTML = '<div class="empty">No trips found in the next while.</div>'; return; }
+    $('trips').innerHTML = conns.map(c => {
+      const cancelled = c.legs.some(l => l.cancelled);
+      const change = c.transferMinutes == null ? 'direct'
+        : `<span class="${c.transferMinutes <= 3 ? 'tight' : ''}">${c.transferMinutes} min change</span>`;
+      return `
+        <div class="row${cancelled ? ' cancelled' : ''}${minsUntil(c.departs) < 0 ? ' gone' : ''}">
+          ${minsCell(c.departs)}
+          <div class="body">
+            <div class="chain">${c.legs.map(lineBadge).join('<span class="arrow">→</span>')}<span>${change}</span></div>
+            <div class="meta">${hhmm(c.departs)} ${esc(shortStop(c.legs[0].from.stop))} · ${cancelled ? '<span class="cancel">cancelled</span>' : delayText(c.legs[0].from)}</div>
+          </div>
+          <div class="end">${hhmm(c.arrives)}<small>${esc(shortStop(c.destination))}</small></div>
+        </div>`;
+    }).join('');
+  }
+
+  function renderBoards(boards) {
+    $('boards').innerHTML = boards.map(b => `
+      <div>
+        <h2>${esc(shortStop(b.from))} → ${esc(shortStop(b.to))}</h2>
+        <div class="list">${b.trips.length ? b.trips.slice(0, 6).map(t => `
+          <div class="row${t.cancelled ? ' cancelled' : ''}">
+            ${minsCell(t.from.time)}
+            <div class="body">
+              <div class="chain">${lineBadge(t)}<span>towards ${esc(t.direction || shortStop(b.to))}</span></div>
+              <div class="meta">${hhmm(t.from.time)}${t.from.platform ? ` · stop ${esc(t.from.platform)}` : ''} · ${t.cancelled ? '<span class="cancel">cancelled</span>' : delayText(t.from)}</div>
+            </div>
+            <div class="end">${hhmm(t.to.time)}<small>arrives</small></div>
+          </div>`).join('') : '<div class="empty">No direct departures.</div>'}
+        </div>
+      </div>`).join('');
+  }
+
+  // ---------- Loading ----------
+  function showSetup(message) {
+    $('dash').hidden = true; $('setup').hidden = false;
+    const creds = store.get('creds');
+    $('client-id').value = creds?.id || '';
+    $('client-secret').value = '';
+    const p = $('setup').querySelector('p');
+    if (message) { p.textContent = message; p.style.color = 'var(--bad)'; }
+  }
+
+  let loading = 0;
+  async function load() {
+    if (!demo && !store.get('creds')) { showSetup(); return; }
+    $('setup').hidden = true; $('dash').hidden = false;
+    const ticket = ++loading;
+    document.body.classList.add('loading');
+    try {
+      const result = demo ? demoData(mode) : await commute(mode);
+      if (ticket !== loading) return;
+      data = result;
+      $('notice').hidden = true;
+    } catch (err) {
+      if (ticket !== loading) return;
+      if (err instanceof NeedsSetup) { showSetup(err.message); return; }
+      const n = $('notice');
+      n.textContent = err instanceof TypeError
+        ? 'Could not reach Västtrafik. Check your connection.'
+        : `Could not load departures: ${err.message}`;
+      n.classList.add('error'); n.hidden = false;
+    } finally {
+      if (ticket === loading) document.body.classList.remove('loading');
+      render();
+    }
+  }
+
+  $('setup').addEventListener('submit', e => {
+    e.preventDefault();
+    store.set('creds', { id: $('client-id').value.trim(), secret: $('client-secret').value.trim() });
+    token = null; demo = false; load();
+  });
+  $('try-demo').addEventListener('click', () => { demo = true; load(); });
+  $('forget').addEventListener('click', () => { store.del('creds'); store.del('stops'); token = null; demo = false; data = null; showSetup(); });
+  $('refresh').addEventListener('click', load);
+  for (const b of document.querySelectorAll('.switch button')) {
+    b.addEventListener('click', () => {
+      if (mode === b.dataset.mode) return;
+      mode = b.dataset.mode; data = null; render(); load();
+    });
+  }
+
+  // Example trips relative to now, for trying the page without a key.
+  function demoData(m) {
+    const at = min => new Date(Date.now() + min * 60000).toISOString();
+    const point = (stop, min, late = 0) => ({ stop, planned: at(min), time: at(min + late), realtime: true, platform: null });
+    const leg = (line, bg, from, to, dep, dur, late = 0) => ({
+      journeyId: null, line, lineName: `Line ${line}`, colors: { bg, fg: '#ffffff' }, direction: shortStop(to),
+      cancelled: false, from: point(from, dep, late), to: point(to, dep + dur, late),
+    });
+    const H = 'Källarbacken, Göteborg', T = 'Delsjömotet, Göteborg', G = 'Gårdatorget, Göteborg', L = 'Liseberg station, Göteborg';
+    const conn = (origin, destination, legs) => summarise({ origin, destination, legs });
+    const stops = { home: H, transfer: T, office: [G, L] };
+    if (m === 'office') {
+      const a1 = leg('50', '#2f6fb2', G, T, 4, 6), a2 = leg('513', '#c0392b', L, T, 7, 8, 1), a3 = leg('50', '#2f6fb2', G, T, 14, 6);
+      const b1 = leg('514', '#7d3c98', T, H, 13, 5), b2 = leg('514', '#7d3c98', T, H, 28, 5);
+      return { generatedAt: new Date().toISOString(), stops,
+        connections: [conn(G, H, [a1, b1]), conn(L, H, [a2, b1]), conn(G, H, [a3, b2])],
+        boards: [{ from: G, to: T, trips: [a1, a3] }, { from: L, to: T, trips: [a2] }, { from: T, to: H, trips: [b1, b2] }] };
+    }
+    const a1 = leg('514', '#7d3c98', H, T, 5, 5), a2 = leg('514', '#7d3c98', H, T, 20, 5, 2);
+    const g1 = leg('50', '#2f6fb2', T, G, 13, 7), l1 = leg('513', '#c0392b', T, L, 14, 9), g2 = leg('50', '#2f6fb2', T, G, 29, 7);
+    return { generatedAt: new Date().toISOString(), stops,
+      connections: [conn(H, G, [a1, g1]), conn(H, L, [a1, l1]), conn(H, G, [a2, g2])],
+      boards: [{ from: H, to: T, trips: [a1, a2] }, { from: T, to: G, trips: [g1, g2] }, { from: T, to: L, trips: [l1] }] };
+  }
+
+  render();
+  load();
+  setInterval(() => { if (!document.hidden && !$('dash').hidden) load(); }, 30_000);
+  setInterval(render, 15_000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && !$('dash').hidden) load(); });
+})();
+</script>
+</body>
+</html>
