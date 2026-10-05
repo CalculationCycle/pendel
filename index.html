@@ -49,7 +49,10 @@ body {
 main { max-width: 34rem; margin: 0 auto; display: grid; gap: 18px; }
 [hidden] { display: none !important; }
 
-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+header {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+  background: var(--bg); margin-inline: -16px; padding: 8px 16px;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .brand { font: 700 1.6rem/1 var(--f-display); letter-spacing: .02em; text-transform: uppercase; margin: 0; }
 .brand small { display: block; font: 500 .78rem/1.3 var(--f-body); letter-spacing: 0; text-transform: none; color: var(--muted); }
 
@@ -553,6 +556,17 @@ section h2 { font: 600 .78rem/1 var(--f-body); letter-spacing: .12em; text-trans
   }
 
   let loading = 0, busy = false, extra = 0;
+  // Set when a view is opened; the next successful load scrolls past departed rides once.
+  // Background refreshes and "Load more" leave the scroll position alone.
+  let scrollToNow = true;
+
+  function scrollPastDeparted() {
+    const now = document.querySelector('#trips .now-divider');
+    if (!now || !document.querySelector('#trips .row.gone')) return;
+    const smooth = !matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const headerBottom = document.querySelector('header').getBoundingClientRect().bottom;
+    scrollTo({ top: scrollY + now.getBoundingClientRect().top - headerBottom - 8, behavior: smooth ? 'smooth' : 'auto' });
+  }
   const wait = ms => new Promise(r => setTimeout(r, ms));
   // minMs keeps the loading screen up long enough to read instead of flashing.
   async function load(minMs = 0) {
@@ -578,6 +592,7 @@ section h2 { font: 600 .78rem/1 var(--f-body); letter-spacing: .12em; text-trans
     } finally {
       if (ticket === loading) { busy = false; document.body.classList.remove('loading'); }
       render();
+      if (ticket === loading && data && scrollToNow) { scrollToNow = false; requestAnimationFrame(scrollPastDeparted); }
     }
   }
 
@@ -586,7 +601,7 @@ section h2 { font: 600 .78rem/1 var(--f-body); letter-spacing: .12em; text-trans
     store.set('creds', { id: $('client-id').value.trim(), secret: $('client-secret').value.trim() });
     token = null; demo = false; load();
   });
-  $('try-demo').addEventListener('click', () => { demo = true; data = null; load(500); });
+  $('try-demo').addEventListener('click', () => { demo = true; data = null; scrollToNow = true; load(500); });
   $('forget').addEventListener('click', () => { store.del('creds'); store.del('stops'); token = null; demo = false; data = null; showSetup(); });
   $('refresh').addEventListener('click', () => load());
   $('more').addEventListener('click', async () => {
@@ -598,7 +613,7 @@ section h2 { font: 600 .78rem/1 var(--f-body); letter-spacing: .12em; text-trans
   for (const b of document.querySelectorAll('.switch button')) {
     b.addEventListener('click', () => {
       if (mode === b.dataset.mode) return;
-      mode = b.dataset.mode; extra = 0; data = null; $('notice').hidden = true; load(500);
+      mode = b.dataset.mode; extra = 0; data = null; scrollToNow = true; $('notice').hidden = true; load(500);
     });
   }
 
