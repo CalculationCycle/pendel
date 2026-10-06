@@ -320,13 +320,16 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
 
   async function resolveStop(stop) {
     if (typeof stop === 'object') return stop;
-    const cached = store.get('stops') || {};
+    const cached = store.get('stops2') || {};
     if (cached[stop]) return cached[stop];
-    const body = await vt('/locations/by-text', { q: stop, types: 'stoparea', limit: 5 });
-    const hit = (body.results || []).find(r => r.gid);
+    const body = await vt('/locations/by-text', { q: stop, types: 'stoparea', limit: 10 });
+    // Only stop areas (not meta-stations, places or addresses); an exact name beats a partial one.
+    const areas = (body.results || []).filter(r => r.gid && (!r.locationType || norm(r.locationType) === 'stoparea'));
+    const q = norm(stop);
+    const hit = areas.find(r => norm(shortStop(r.name)) === q) || areas.find(r => norm(r.name).startsWith(q)) || areas[0];
     if (!hit) throw new Error(`No stop called "${stop}" was found.`);
     const found = { gid: hit.gid, name: hit.name };
-    store.set('stops', { ...store.get('stops'), [stop]: found });
+    store.set('stops2', { ...store.get('stops2'), [stop]: found });
     return found;
   }
 
@@ -371,6 +374,8 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
     for (let page = 0; page < 6 && cursor < end; page++) {
       const body = await vt('/journeys', {
         originGid: from.gid, destinationGid: to.gid, onlyDirectConnections: true,
+        // Buses at a big interchange can leave from a neighbouring stop area a short walk away.
+        includeNearbyStopAreas: true,
         dateTime: localIso(new Date(cursor)), limit: 20,
       });
       const legs = (body.results || [])
@@ -415,7 +420,7 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
 
   // Every departure from a stop in the window, whatever the line or direction.
   // Fetched page by page, so a cap on results per request cannot cut the window short.
-  async function departuresFrom(stop, start, end) {
+  async function departuresFrom(stop, start, end, towards) {
     const seen = new Map();
     let cursor = start;
     for (let page = 0; page < 10 && cursor < end; page++) {
@@ -423,6 +428,7 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
         startDateTime: localIso(new Date(cursor)),
         timeSpanInMinutes: Math.max(1, Math.ceil((end - cursor) / 60000)),
         limit: 50,
+        ...(towards ? { directionGid: towards.gid } : {}),
       });
       const deps = (body.results || []).map(fromDeparture);
       const before = seen.size;
@@ -508,6 +514,14 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
     return [...out.values()].map(h => ({ ...h, reasons: h.reasons.size > 1 ? [...h.reasons].filter(r => r !== 'Other line') : [...h.reasons] })).sort((a, b) => ms(a.leg.from.time) - ms(b.leg.from.time));
   }
 
+  // The easy leg: the planner's direct trips, or if it finds none, the departure board's buses
+  // heading for `to` (arrival unknown).
+  async function easyLeg(from, to, start, end) {
+    const trips = await tripsBetween(from, to, start, end).catch(() => []);
+    if (trips.length) return trips;
+    return departuresFrom(from, start, end, to).catch(() => []);
+  }
+
   async function commute(m, extra) {
     const [home, ...offices] = await Promise.all([STOPS.home, ...STOPS.office].map(resolveStop));
     const transfers = await Promise.all(TRANSFERS.map(async t => ({
@@ -531,7 +545,7 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
       const later = end + 90 * 60_000;
       const [keys, onward] = await Promise.all([
         Promise.all(transfers.map(t => keyLegs(board, home, t.stop, start, end, l => homeLine(l) && usesTransfer(t, l), towardsTown))),
-        Promise.all(transfers.map(t => Promise.all(t.officeIdx.map(oi => tripsBetween(t.stop, offices[oi], start, later))))),
+        Promise.all(transfers.map(t => Promise.all(t.officeIdx.map(oi => easyLeg(t.stop, offices[oi], start, later))))),
       ]);
       // A bus reaching several transfer stops is listed once: for the first stop in TRANSFERS
       // where its arrival is known, else the first where it was kept on its destination sign.
@@ -563,13 +577,13 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
           warnings.push(`Could not read the departure board at ${shortStop(t.stop.name)} (${e.message}), so some buses may be missing.`);
           return null;
         }), t.stop, home, start, end, l => homeLine(l) && usesTransfer(t, l)))),
-        Promise.all(transfers.map(t => Promise.all(t.officeIdx.map(oi => tripsBetween(offices[oi], t.stop, earlier, end))))),
+        Promise.all(transfers.map(t => Promise.all(t.officeIdx.map(oi => easyLeg(offices[oi], t.stop, earlier, end))))),
       ]);
       transfers.forEach((t, ti) => {
         const via = shortStop(t.stop.name);
         for (const leg of keys[ti].legs) {
           const links = t.officeIdx.map((oi, k) => {
-            const ok = feeders[ti][k].filter(f => !f.cancelled && f.journeyId !== leg.journeyId && minutesBetween(f.to.time, leg.from.time) >= TRANSFER_MINUTES);
+            const ok = feeders[ti][k].filter(f => !f.cancelled && f.to && f.journeyId !== leg.journeyId && minutesBetween(f.to.time, leg.from.time) >= TRANSFER_MINUTES);
             const last = ok[ok.length - 1];
             return last && { office: offices[oi].name, leg: last, transferMinutes: minutesBetween(last.to.time, leg.from.time) };
           }).filter(Boolean);
@@ -673,13 +687,14 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
       const row = rows.find(r => !r.leg.cancelled && !departed(r));
       if (row) {
         const m = minsUntil(row.leg.from.time);
-        const first = row.links.reduce((x, l) => !x || ms(l.leg.to.time) < ms(x.leg.to.time) ? l : x, null);
+        const arrival = l => ms((l.leg.to || l.leg.from).time);
+        const first = row.links.reduce((x, l) => !x || arrival(l) < arrival(x) ? l : x, null);
         html = `
           <div class="hero-top"><span>Next bus from ${esc(shortStop(row.leg.from.stop))}</span><span>${delayText(row.leg.from)}</span></div>
           <div class="countdown">${m <= 0 ? 'Now' : m >= 60 ? hhmm(row.leg.from.time) : `${m}<span>min</span>`}</div>
           <div class="hero-legs">
             <div class="hero-leg">${lineBadge(row.leg)}<div class="where">${esc(shortStop(row.leg.from.stop))} → ${esc(row.via)}</div><div class="t">${hhmm(row.leg.from.time)}${row.leg.to ? `–${hhmm(row.leg.to.time)}` : ''}</div></div>
-            ${first ? `<div class="hero-leg">${lineBadge(first.leg)}<div class="where">then to ${esc(shortStop(first.office))}</div><div class="t">${hhmm(first.leg.from.time)}–${hhmm(first.leg.to.time)}</div></div>` : ''}
+            ${first ? `<div class="hero-leg">${lineBadge(first.leg)}<div class="where">then to ${esc(shortStop(first.office))}</div><div class="t">${hhmm(first.leg.from.time)}${first.leg.to ? `–${hhmm(first.leg.to.time)}` : ''}</div></div>` : ''}
           </div>`;
       }
     } else {
@@ -707,7 +722,7 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
   function linkHtml(link) {
     const tight = link.transferMinutes <= 3 ? ' tight' : '';
     if (mode === 'home') {
-      return `<div class="link">${lineBadge(link.leg)}<span>${hhmm(link.leg.from.time)} on to ${esc(shortStop(link.office))}, there ${hhmm(link.leg.to.time)}
+      return `<div class="link">${lineBadge(link.leg)}<span>${hhmm(link.leg.from.time)} on to ${esc(shortStop(link.office))}${link.leg.to ? `, there ${hhmm(link.leg.to.time)}` : ''}
         <span class="${tight}">· ${link.transferMinutes} min change</span></span></div>`;
     }
     const gone = leftYet(link.leg);
@@ -775,7 +790,7 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
               <div class="lines">${lineBadge(t)}<span class="dir">${t.from.platform ? `Platform ${esc(t.from.platform)} · ` : ''}${t.cancelled ? '<span class="cancel">Cancelled</span>' : leavesIn(t.from.time) || ''}</span></div>
             </div>
             <div class="trip-times">${timesHtml(t.from, t.to, t.cancelled)}</div>
-          </div>`).join('') : '<div class="empty">No direct departures.</div>'}
+          </div>`).join('') : `<div class="empty">Västtrafik found no direct buses from ${esc(shortStop(b.from))} to ${esc(shortStop(b.to))} right now.</div>`}
         </div>
       </section>`;
     }).join('');
@@ -838,7 +853,7 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
     token = null; demo = false; load();
   });
   $('try-demo').addEventListener('click', () => { demo = true; data = null; scrollToNow = true; load(500); });
-  $('forget').addEventListener('click', () => { store.del('creds'); store.del('stops'); token = null; demo = false; data = null; showSetup(); });
+  $('forget').addEventListener('click', () => { store.del('creds'); store.del('stops2'); token = null; demo = false; data = null; showSetup(); });
   $('refresh').addEventListener('click', () => load());
   $('more').addEventListener('click', async () => {
     extra += MORE_MINUTES;
