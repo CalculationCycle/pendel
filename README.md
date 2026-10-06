@@ -2,25 +2,25 @@
 
 A one-page commute dashboard on Västtrafik's open API (Planera Resa v4). Static, so it runs on GitHub Pages.
 
-- **Home** (default until 10:30): Källarbacken → Delsjömotet → Gårdatorget or Liseberg station,
-  rides leaving Källarbacken 06:00–09:30
-- **Office** (default from 10:30): Gårdatorget or Liseberg station → Delsjömotet → Källarbacken,
-  rides leaving 15:00–17:30
+The page is built around the leg that matters, the bus between Källarbacken and Delsjömotet (or
+Landvetter). The other leg has buses every few minutes, so it only gets a small line.
 
-Rides that have already left stay in the list, greyed out and marked *Departed*, with a *Now* line
-before the next one. "Load more" extends the window by 30 minutes. Once a window has passed for the
-day, the view shows the next two hours instead. The windows are `WINDOWS` at the top of the script.
+- **Home** (default until 10:30, rides 06:00–09:30): every 300 and 430 from Källarbacken towards
+  Landvetter or Åkareplatsen, with its arrival at Delsjömotet (or Landvetter for the 430). Under
+  each: the first bus you can catch on to Gårdatorget and Liseberg station.
+- **Office** (default from 10:30, rides 15:00–17:30): every 300 and 430 from Delsjömotet (or 430
+  from Landvetter) to Källarbacken. Under each: the last bus from Liseberg station or Gårdatorget
+  that makes it. A bus home you can no longer reach from work is marked *Too late*. The box at the
+  top counts down to when you have to leave the office.
 
-Home lists every departure of lines 300 and 430 from Källarbacken towards Landvetter or
-Åkareplatsen in the window (`HOME_LINES` and `HOME_DIRECTIONS` in `index.html`, matched against
-the bus's destination sign), straight from the stop's departure board, so no bus is left out. Under each one are the onward connections to Gårdatorget and Liseberg
-station: the earliest bus you can catch with 2 minutes to change (`TRANSFER_MINUTES` in
-`index.html`), or "stay on" when the same bus goes all the way. Changes are considered at
-Delsjömotet (to either office stop) and at Landvetter (430 to X6, to Liseberg station); the list
-is `TRANSFERS` in `index.html`. Office lists every bus from
-Gårdatorget and Liseberg station towards Delsjömotet or Landvetter, each with the connection that
-gets you home first. Realtime
-delays and cancellations are shown, and the page refreshes every 30 seconds.
+Departures come from each stop's departure board, so no bus is left out; a bus's own stop list
+rules out buses going the other way. Rides that have left stay listed, greyed out, with a *Now* line
+before the next one, and the page scrolls to it. "Load more" extends the window by 30 minutes. At the
+bottom are the next buses on the easy leg. Delays and cancellations come from Västtrafik's realtime
+data; the page refreshes every 30 seconds.
+
+Settings at the top of the script: `WINDOWS`, `TRANSFER_MINUTES` (2), `HOME_LINES`,
+`HOME_DIRECTIONS`, `STOPS` and `TRANSFERS`.
 
 ## Publish
 
