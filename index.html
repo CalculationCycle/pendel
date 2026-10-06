@@ -253,9 +253,14 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
   // To pin a stop, replace its name with { gid: '9021014...', name: '...' }.
   const STOPS = {
     home: 'Källarbacken',
-    transfer: 'Delsjömotet',
     office: ['Gårdatorget', 'Liseberg station'],
   };
+  // Where you can change bus between home and work. `to` names the office stops reachable from there
+  // (as written in STOPS.office); `lines` limits which home-stop lines go there (omit for any line).
+  const TRANSFERS = [
+    { stop: 'Delsjömotet', to: ['Gårdatorget', 'Liseberg station'] },
+    { stop: 'Landvetter', to: ['Liseberg station'], lines: ['430'] },
+  ];
 
   const $ = id => document.getElementById(id);
   const store = {
@@ -412,94 +417,137 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
       .sort((a, b) => ms(a.from.time) - ms(b.from.time));
   }
 
-  // When the journey planner did not return a departure, ask its own stop list when it reaches the transfer stop.
+  // A bus's own list of stops, for when the journey planner did not return it.
   const callsCache = new Map();
-  async function arrivalAt(origin, dep, target) {
-    if (!dep.detailsReference) return null;
+  async function callsOf(origin, dep) {
+    if (!dep.detailsReference) return [];
     const hit = callsCache.get(dep.detailsReference);
     if (hit && Date.now() - hit.at < 5 * 60_000) return hit.value;
-    let value = null;
+    let value = [];
     try {
       const body = await vt(`/stop-areas/${origin.gid}/departures/${encodeURIComponent(dep.detailsReference)}/details`, { includes: 'servicejourneycalls' });
-      const calls = body.serviceJourneys?.[0]?.callsOnServiceJourney || [];
-      // Only a call after this one counts: a bus in the other direction has already passed the target.
-      const from = calls.findIndex(c => c.stopPoint?.stopArea?.gid === origin.gid);
-      const c = calls.find((c, i) => i > from && c.stopPoint?.stopArea?.gid === target.gid);
-      const planned = c && (c.plannedArrivalTime || c.plannedDepartureTime);
-      if (planned && from >= 0 && ms(planned) >= ms(dep.from.planned)) {
-        const est = c.estimatedArrivalTime || c.estimatedDepartureTime;
-        value = { planned, time: est || planned, realtime: Boolean(est), stop: c.stopPoint?.name || target.name, platform: c.stopPoint?.platform || null };
-      }
-    } catch { /* treated as not passing the stop */ }
+      value = body.serviceJourneys?.[0]?.callsOnServiceJourney || [];
+    } catch { /* treated as stopping nowhere useful */ }
     callsCache.set(dep.detailsReference, { at: Date.now(), value });
     return value;
   }
 
-  const byJourney = legs => new Map(legs.filter(l => l.journeyId).map(l => [l.journeyId, l]));
+  // When the bus reaches target after leaving origin. A bus in the other direction has already passed it.
+  function arrivalIn(calls, origin, target, dep) {
+    const from = calls.findIndex(c => c.stopPoint?.stopArea?.gid === origin.gid);
+    if (from < 0) return null;
+    const c = calls.find((c, i) => i > from && c.stopPoint?.stopArea?.gid === target.gid);
+    const planned = c && (c.plannedArrivalTime || c.plannedDepartureTime);
+    if (!planned || ms(planned) < ms(dep.from.planned)) return null;
+    const est = c.estimatedArrivalTime || c.estimatedDepartureTime;
+    return { planned, time: est || planned, realtime: Boolean(est), stop: c.stopPoint?.name || target.name, platform: c.stopPoint?.platform || null };
+  }
 
-  // Onward options for one first bus: stay on if it goes all the way, else the earliest catchable bus from the transfer stop.
+  const byJourney = legs => new Map(legs.filter(l => l.journeyId).map(l => [l.journeyId, l]));
+  const usesTransfer = (t, leg) => !t.lines || t.lines.includes(leg.line);
+
+  // The earliest catchable bus from the transfer stop, given when the first bus gets there.
+  function changeAt(leg, at, via, destination, seconds) {
+    const next = seconds.find(s => !s.cancelled && s.journeyId !== leg.journeyId && minutesBetween(at.time, s.from.time) >= TRANSFER_MINUTES);
+    if (!next) return null;
+    return { destination, via, direct: false, leg: next, arrives: next.to.time, transferMinutes: minutesBetween(at.time, next.from.time) };
+  }
+  const earliest = options => options.filter(Boolean).reduce((x, o) => !x || ms(o.arrives) < ms(x.arrives) ? o : x, null);
+
+  // Kept for the example data: a single transfer with a known arrival.
   function onwardFor(leg, destination, seconds, directs) {
     const direct = directs.get(leg.journeyId);
     if (direct) return { destination, direct: true, leg: direct, arrives: direct.to.time, transferMinutes: null };
-    if (!leg.to) return null;
-    const next = seconds.find(s => !s.cancelled && s.journeyId !== leg.journeyId && minutesBetween(leg.to.time, s.from.time) >= TRANSFER_MINUTES);
-    if (!next) return null;
-    return { destination, direct: false, leg: next, arrives: next.to.time, transferMinutes: minutesBetween(leg.to.time, next.from.time) };
+    return leg.to ? changeAt(leg, leg.to, shortStop(leg.to.stop), destination, seconds) : null;
   }
 
   async function commute(m, extra) {
-    const [home, transfer, ...offices] = await Promise.all([STOPS.home, STOPS.transfer, ...STOPS.office].map(resolveStop));
+    const [home, ...offices] = await Promise.all([STOPS.home, ...STOPS.office].map(resolveStop));
+    const transfers = await Promise.all(TRANSFERS.map(async t => ({
+      ...t,
+      stop: await resolveStop(t.stop),
+      officeIdx: STOPS.office.map((o, i) => t.to.includes(typeof o === 'object' ? o.name : o) ? i : -1).filter(i => i >= 0),
+    })));
     const win = windowFor(m, extra);
     const { start, end } = win;
     // Second legs may leave well after the last first leg.
     const later = end + 90 * 60_000;
     const boards = [];
     let rows;
+
     if (m === 'office') {
-      const [second, ...rest] = await Promise.all([
-        tripsBetween(transfer, home, start, later),
-        ...offices.map(o => tripsBetween(o, transfer, start, end)),
-        ...offices.map(o => tripsBetween(o, home, start, end).catch(() => [])),
-      ]);
-      const firsts = rest.slice(0, offices.length), directs = rest.slice(offices.length);
-      rows = offices.flatMap((o, i) => {
-        const direct = byJourney(directs[i]);
-        // Buses that go straight home without passing the transfer stop get a row too.
-        const legs = [...firsts[i], ...directs[i].filter(d => !firsts[i].some(f => f.journeyId && f.journeyId === d.journeyId)).map(d => ({ ...d, to: null }))];
-        return legs.map(leg => ({ origin: o.name, leg, onward: [onwardFor(leg, home.name, second, direct)].filter(Boolean) }));
+      const homeTrips = await Promise.all(transfers.map(t => tripsBetween(t.stop, home, start, later)
+        .then(trips => trips.filter(s => usesTransfer(t, s)))));
+      const directs = await Promise.all(offices.map(o => tripsBetween(o, home, start, end).catch(() => [])));
+      const rowsById = new Map();
+      const addRow = (origin, leg) => {
+        const key = `${origin}|${leg.journeyId || leg.from.planned}`;
+        if (!rowsById.has(key)) rowsById.set(key, { origin, leg: { ...leg, to: null }, vias: [], options: [] });
+        return rowsById.get(key);
+      };
+      await Promise.all(offices.map(async (o, oi) => {
+        const ts = transfers.filter(t => t.officeIdx.includes(oi));
+        const firsts = await Promise.all(ts.map(t => tripsBetween(o, t.stop, start, end)));
+        ts.forEach((t, ti) => {
+          boards.push({ from: o.name, to: t.stop.name, trips: firsts[ti] });
+          for (const leg of firsts[ti]) {
+            const row = addRow(o.name, leg);
+            const via = shortStop(t.stop.name);
+            row.vias.push({ name: via, at: leg.to });
+            row.options.push(changeAt(leg, leg.to, via, home.name, homeTrips[transfers.indexOf(t)]));
+          }
+        });
+        for (const d of directs[oi]) {
+          addRow(o.name, d).options.push({ destination: home.name, direct: true, leg: d, arrives: d.to.time, transferMinutes: null });
+        }
+      }));
+      rows = [...rowsById.values()].map(r => {
+        const direct = r.options.find(o => o?.direct);
+        return { origin: r.origin, leg: r.leg, vias: r.vias, onward: [direct || earliest(r.options)].filter(Boolean) };
       });
-      offices.forEach((o, i) => boards.push({ from: o.name, to: transfer.name, trips: firsts[i] }));
-      boards.push({ from: transfer.name, to: home.name, trips: second });
+      transfers.forEach((t, ti) => boards.push({ from: t.stop.name, to: home.name, trips: homeTrips[ti] }));
     } else {
-      const [deps, viaTransfer, ...rest] = await Promise.all([
-        departuresFrom(home, start, end).catch(() => null),
-        tripsBetween(home, transfer, start, end),
-        ...offices.map(o => tripsBetween(transfer, o, start, later)),
-        ...offices.map(o => tripsBetween(home, o, start, end).catch(() => [])),
-      ]);
-      const seconds = rest.slice(0, offices.length), directs = rest.slice(offices.length).map(byJourney);
-      const planned = byJourney(viaTransfer);
-      // The departure board lists every bus in both directions; the planner's trips tell when most of them reach the transfer stop.
       const norm = t => String(t || '').toLocaleLowerCase('sv');
       const wanted = l => (!HOME_LINES.length || HOME_LINES.includes(l.line))
         && (!HOME_DIRECTIONS.length || HOME_DIRECTIONS.some(d => norm(l.direction).includes(norm(d))));
-      const legs = await Promise.all((deps || viaTransfer).filter(wanted).map(async d => {
-        const known = planned.get(d.journeyId);
-        if (known) return { ...d, to: known.to };
-        if (d.to) return d;
-        return { ...d, to: await arrivalAt(home, d, transfer) };
+      const [deps, directs, viaTrips, onwardTrips] = await Promise.all([
+        departuresFrom(home, start, end).catch(() => null),
+        Promise.all(offices.map(o => tripsBetween(home, o, start, end).catch(() => []))),
+        Promise.all(transfers.map(t => tripsBetween(home, t.stop, start, end).catch(() => []))),
+        Promise.all(transfers.map(t => Promise.all(t.officeIdx.map(oi => tripsBetween(t.stop, offices[oi], start, later))))),
+      ]);
+      const directById = directs.map(byJourney), viaById = viaTrips.map(byJourney);
+      // The departure board lists every bus; the planner's trips tell when most of them reach each transfer stop.
+      const firsts = (deps || viaTrips.flat().filter((l, i, all) => all.findIndex(x => x.journeyId === l.journeyId) === i)).filter(wanted);
+      rows = await Promise.all(firsts.map(async leg => {
+        const vias = [];
+        const options = offices.map(() => []);
+        for (const [ti, t] of transfers.entries()) {
+          if (!usesTransfer(t, leg)) continue;
+          const at = viaById[ti].get(leg.journeyId)?.to || arrivalIn(await callsOf(home, leg), home, t.stop, leg);
+          if (!at) continue;
+          const via = shortStop(t.stop.name);
+          vias.push({ name: via, at });
+          t.officeIdx.forEach((oi, k) => options[oi].push(changeAt(leg, at, via, offices[oi].name, onwardTrips[ti][k])));
+        }
+        const onward = offices.map((o, oi) => {
+          const d = directById[oi].get(leg.journeyId);
+          return d ? { destination: o.name, direct: true, leg: d, arrives: d.to.time, transferMinutes: null } : earliest(options[oi]);
+        }).filter(Boolean);
+        return { origin: home.name, leg, vias, onward };
       }));
-      rows = legs.map(leg => ({
-        origin: home.name, leg,
-        onward: offices.map((o, i) => onwardFor(leg, o.name, seconds[i], directs[i])).filter(Boolean),
-      }));
-      // Without a direction list, a bus that never reaches the transfer stop is going the other way.
-      if (!HOME_DIRECTIONS.length) rows = rows.filter(r => r.leg.to || r.onward.length);
-      boards.push({ from: home.name, to: transfer.name, trips: viaTransfer });
-      offices.forEach((o, i) => boards.push({ from: transfer.name, to: o.name, trips: seconds[i] }));
+      // Without a direction list, a bus that reaches no transfer stop is going the other way.
+      if (!HOME_DIRECTIONS.length) rows = rows.filter(r => r.vias.length || r.onward.length);
+      transfers.forEach((t, ti) => {
+        boards.push({ from: home.name, to: t.stop.name, trips: viaTrips[ti].filter(wanted) });
+        t.officeIdx.forEach((oi, k) => boards.push({ from: t.stop.name, to: offices[oi].name, trips: onwardTrips[ti][k] }));
+      });
     }
     rows.sort((a, b) => ms(a.leg.from.time) - ms(b.leg.from.time));
-    return { generatedAt: new Date().toISOString(), window: win, stops: { home: home.name, transfer: transfer.name, office: offices.map(o => o.name) }, rows, boards };
+    return {
+      generatedAt: new Date().toISOString(), window: win, rows, boards,
+      stops: { home: home.name, transfers: transfers.map(t => t.stop.name), office: offices.map(o => o.name) },
+    };
   }
 
   // ---------- Rendering ----------
@@ -547,8 +595,8 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
     if (!data) { renderLoader(); return; }
     const s = data.stops, offices = s.office.map(shortStop).join(' / ');
     $('route').innerHTML = mode === 'home'
-      ? `<b>${esc(shortStop(s.home))}</b> → ${esc(shortStop(s.transfer))} → <b>${esc(offices)}</b>`
-      : `<b>${esc(offices)}</b> → ${esc(shortStop(s.transfer))} → <b>${esc(shortStop(s.home))}</b>`;
+      ? `<b>${esc(shortStop(s.home))}</b> → ${s.transfers.map(t => esc(shortStop(t))).join(' / ')} → <b>${esc(offices)}</b>`
+      : `<b>${esc(offices)}</b> → ${s.transfers.map(t => esc(shortStop(t))).join(' / ')} → <b>${esc(shortStop(s.home))}</b>`;
     $('subtitle').textContent = demo ? 'Example data' : 'Västtrafik, live';
     renderHero(data.rows.find(r => !r.leg.cancelled && r.onward.length && minsUntil(r.leg.from.time) >= 0));
     renderTrips(data.rows, data.window);
@@ -574,13 +622,14 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
     if (!row) return;
     const o = best(row), first = row.leg;
     const m = minsUntil(first.from.time);
-    const legs = (o.direct ? [o.leg] : [first, o.leg]).map(l => `
+    const firstLeg = { ...first, to: row.vias.find(v => v.name === o.via)?.at || null };
+    const legs = (o.direct ? [o.leg] : [firstLeg, o.leg]).map(l => `
       <div class="hero-leg">
         ${lineBadge(l)}
         <div class="where">${esc(shortStop(l.from.stop))} → ${esc(shortStop(l.to?.stop || o.destination))}</div>
         <div class="t">${hhmm(l.from.time)}</div>
       </div>`).join('');
-    const change = o.direct ? 'Direct, no change' : `${o.transferMinutes} min to change at ${esc(shortStop(data.stops.transfer))}`;
+    const change = o.direct ? 'Direct, no change' : `${o.transferMinutes} min to change at ${esc(o.via)}`;
     hero.innerHTML = `
       <div class="hero-top"><span>Next trip from ${esc(shortStop(first.from.stop))}</span><span>${delayText(first.from)}</span></div>
       <div class="countdown">${m <= 0 ? 'Now' : m >= 60 ? hhmm(first.from.time) : `${m}<span>min</span>`}</div>
@@ -598,7 +647,7 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
   function hopHtml(o, row) {
     const arrives = `<span class="hop-arr">${hhmm(o.arrives)}<small>${minutesBetween(row.leg.from.time, o.arrives)} min</small></span>`;
     if (o.direct) return `<div class="hop">${lineBadge(o.leg)}<span class="hop-what">Stay on to <b>${esc(shortStop(o.destination))}</b></span>${arrives}</div>`;
-    return `<div class="hop">${lineBadge(o.leg)}<span class="hop-what">${hhmm(o.leg.from.time)} to <b>${esc(shortStop(o.destination))}</b>
+    return `<div class="hop">${lineBadge(o.leg)}<span class="hop-what">${hhmm(o.leg.from.time)} from ${esc(o.via)} to <b>${esc(shortStop(o.destination))}</b>
       <span class="${o.transferMinutes <= 3 ? 'tight' : ''}">· ${o.transferMinutes} min change</span></span>${arrives}</div>`;
   }
 
@@ -607,19 +656,19 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
     $('trips-title').textContent = win.rolling ? `Departures · next ${Math.round((win.end - Date.now()) / 3600000 * 2) / 2} h` : `Departures · ${t(win.start)}–${t(win.end)}`;
     $('more-label').textContent = `Load later departures (until ${t(win.end + MORE_MINUTES * 60_000)})`;
     if (!rows.length) { $('trips').innerHTML = '<div class="empty">No departures in this time window.</div>'; return; }
-    const transfer = shortStop(data.stops.transfer);
     const firstUpcoming = rows.findIndex(r => !departed(r));
     const nowLine = `<div class="now-divider"><span>Now ${t(Date.now())}</span></div>`;
     $('trips').innerHTML = rows.map((row, i) => {
       const { leg } = row;
       const gone = departed(row);
       const state = leg.cancelled ? '<span class="cancel">Cancelled</span>' : gone ? '<span class="pill-gone">Departed</span>' : leavesIn(leg.from.time);
-      const via = leg.to ? `${esc(transfer)} ${hhmm(leg.to.time)}` : row.onward.some(o => o.direct) ? '' : `Does not stop at ${esc(transfer)}`;
+      const via = row.vias.length ? row.vias.map(v => `${esc(v.name)} ${hhmm(v.at.time)}`).join(' · ')
+        : row.onward.some(o => o.direct) ? '' : 'No change stop on this route';
       const onward = row.onward.length && !leg.cancelled
         ? `<div class="onward">${row.onward.map(o => hopHtml(o, row)).join('')}</div>`
-        : leg.to && !leg.cancelled ? `<div class="onward"><div class="hop none">No onward bus to catch in time</div></div>` : '';
+        : row.vias.length && !leg.cancelled ? `<div class="onward"><div class="hop none">No onward bus to catch in time</div></div>` : '';
       return `${i === firstUpcoming && i > 0 ? nowLine : ''}
-        <div class="trip${leg.cancelled ? ' cancelled' : ''}${gone ? ' gone' : ''}${!leg.to && !row.onward.length ? ' elsewhere' : ''}">
+        <div class="trip${leg.cancelled ? ' cancelled' : ''}${gone ? ' gone' : ''}${!row.vias.length && !row.onward.length ? ' elsewhere' : ''}">
           <div class="trip-main">
             <div class="trip-from">${fromHtml(leg.from)}</div>
             <div class="lines">${lineBadge(leg)}<span class="dir">Towards ${esc(shortStop(leg.direction) || '?')}</span></div>
@@ -738,21 +787,22 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
       cancelled: false, from: point(from, dep, late), to: to ? point(to, dep + dur, late) : null,
     });
     const H = 'Källarbacken, Göteborg', T = 'Delsjömotet, Göteborg', G = 'Gårdatorget, Göteborg', L = 'Liseberg station, Göteborg';
-    const stops = { home: H, transfer: T, office: [G, L] };
+    const stops = { home: H, transfers: [T], office: [G, L] };
+    const vias = f => f.to ? [{ name: shortStop(f.to.stop), at: f.to }] : [];
     const window = { start: Date.now() - 40 * 60000, end: Date.now() + (60 + extra) * 60000, rolling: false };
     const none = new Map();
     if (m === 'office') {
       const second = [leg('514', '#00843d', T, H, -2, 5), leg('514', '#00843d', T, H, 13, 5), leg('514', '#00843d', T, H, 28, 5)];
       const firsts = [leg('50', '#0a5fb4', G, T, -11, 6), leg('50', '#0a5fb4', G, T, 4, 6), leg('513', '#d6007d', L, T, 7, 8, 1), leg('50', '#0a5fb4', G, T, 14, 6)];
       return { generatedAt: new Date().toISOString(), stops, window,
-        rows: firsts.map(f => ({ origin: f.from.stop, leg: f, onward: [onwardFor(f, H, second, none)].filter(Boolean) })),
+        rows: firsts.map(f => ({ origin: f.from.stop, leg: f, vias: vias(f), onward: [onwardFor(f, H, second, none)].filter(Boolean) })),
         boards: [{ from: G, to: T, trips: firsts }, { from: T, to: H, trips: second }] };
     }
     const toG = [leg('50', '#0a5fb4', T, G, -3, 7), leg('50', '#0a5fb4', T, G, 13, 7), leg('50', '#0a5fb4', T, G, 29, 7)];
     const toL = [leg('513', '#d6007d', T, L, 14, 9), leg('513', '#d6007d', T, L, 29, 9)];
     const firsts = [leg('514', '#00843d', H, T, -10, 5), leg('514', '#00843d', H, T, 5, 5), leg('16', '#00843d', H, null, 11, 0, 0, 'Partille'), leg('514', '#00843d', H, T, 20, 5, 2)];
     return { generatedAt: new Date().toISOString(), stops, window,
-      rows: firsts.map(f => ({ origin: H, leg: f, onward: [onwardFor(f, G, toG, none), onwardFor(f, L, toL, none)].filter(Boolean) })),
+      rows: firsts.map(f => ({ origin: H, leg: f, vias: vias(f), onward: [onwardFor(f, G, toG, none), onwardFor(f, L, toL, none)].filter(Boolean) })),
       boards: [{ from: H, to: T, trips: firsts.filter(f => f.to) }, { from: T, to: G, trips: toG }, { from: T, to: L, trips: toL }] };
   }
 

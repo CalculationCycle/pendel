@@ -13,10 +13,13 @@ day, the view shows the next two hours instead. The windows are `WINDOWS` at the
 
 Home lists every departure of lines 300 and 430 from Källarbacken towards Landvetter or
 Åkareplatsen in the window (`HOME_LINES` and `HOME_DIRECTIONS` in `index.html`, matched against
-the bus's destination sign), straight from the stop's departure board, so no bus is left out. Under each one are the onward connections from Delsjömotet to
-Gårdatorget and Liseberg station: the earliest bus you can catch with 2 minutes to change
-(`TRANSFER_MINUTES` in `index.html`), or "stay on" when the same bus goes all the way. Office lists every bus from
-Gårdatorget and Liseberg station towards Delsjömotet, each with its connection home. Realtime
+the bus's destination sign), straight from the stop's departure board, so no bus is left out. Under each one are the onward connections to Gårdatorget and Liseberg
+station: the earliest bus you can catch with 2 minutes to change (`TRANSFER_MINUTES` in
+`index.html`), or "stay on" when the same bus goes all the way. Changes are considered at
+Delsjömotet (to either office stop) and at Landvetter (430 to X6, to Liseberg station); the list
+is `TRANSFERS` in `index.html`. Office lists every bus from
+Gårdatorget and Liseberg station towards Delsjömotet or Landvetter, each with the connection that
+gets you home first. Realtime
 delays and cancellations are shown, and the page refreshes every 30 seconds.
 
 ## Publish
