@@ -111,8 +111,17 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
 .planned s, .planned span { padding: 0 4px; min-width: 3.1rem; text-align: center; }
 .dur { font-size: .9rem; color: var(--ink); margin-top: 4px; }
 
+.lines .dir { align-self: center; font-size: .92rem; color: var(--muted); }
+.onward { grid-column: 1 / -1; display: grid; gap: 6px; border-top: 1px dashed var(--line); padding-top: 10px; margin-top: 4px; }
+.hop { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; font-size: .92rem; }
+.hop .tight { color: var(--late); }
+.hop-arr { font-weight: 700; font-size: 1.05rem; text-align: right; white-space: nowrap; }
+.hop-arr small { display: block; font-weight: 500; font-size: .76rem; color: var(--muted); }
+.hop.none { display: block; color: var(--muted); }
+.trip.elsewhere { background: var(--bg); }
+.trip.elsewhere .trip-from, .trip.elsewhere .tt { opacity: .7; }
 .trip.gone { background: var(--row-gone); }
-.trip.gone .trip-from, .trip.gone .tt, .trip.gone .lines, .trip.gone .dur { opacity: .55; }
+.trip.gone .trip-from, .trip.gone .tt, .trip.gone .lines, .trip.gone .onward { opacity: .55; }
 .trip.gone .line { filter: grayscale(1); }
 .pill-gone { display: inline-block; font: 700 .7rem/1 var(--f-body); letter-spacing: .06em; text-transform: uppercase; padding: 4px 7px; border-radius: 4px; background: var(--muted); color: var(--bg); }
 .trip.cancelled .tt { text-decoration: line-through; color: var(--bad); }
@@ -370,33 +379,66 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
     return { start: Date.now() - 15 * 60_000, end: Date.now() + (120 + extra) * 60_000, rolling: true };
   }
 
-  // Each first bus, paired with the earliest bus from the transfer stop you can still make.
-  function pairUp(firsts, seconds, origin, destination) {
-    const out = [];
-    for (const a of firsts) {
-      if (a.cancelled) continue;
-      const b = seconds.find(s => !s.cancelled && minutesBetween(a.to.time, s.from.time) >= TRANSFER_MINUTES);
-      if (!b || (b.journeyId && b.journeyId === a.journeyId)) continue;
-      out.push({ origin, destination, legs: [a, b] });
-    }
-    return out;
-  }
-
-  function summarise(c) {
-    const first = c.legs[0], last = c.legs[c.legs.length - 1];
+  // A departure from a stop's departure board, in the same shape as a journey leg (arrival still unknown).
+  function fromDeparture(d) {
+    const sj = d.serviceJourney || {}, line = sj.line || {};
     return {
-      ...c,
-      transferMinutes: c.legs.length > 1 ? minutesBetween(first.to.time, c.legs[1].from.time) : null,
-      departs: first.from.time, arrives: last.to.time,
-      durationMinutes: minutesBetween(first.from.time, last.to.time),
+      journeyId: sj.gid || null,
+      detailsReference: d.detailsReference || null,
+      line: line.shortName || line.designation || line.name || '?',
+      lineName: line.name || null,
+      colors: { bg: line.backgroundColor || null, fg: line.foregroundColor || null, border: line.borderColor || null },
+      direction: sj.direction || sj.directionDetails?.shortDirection || null,
+      cancelled: Boolean(d.isCancelled || d.isPartCancelled),
+      from: call(d),
+      to: null,
     };
   }
 
-  // Of trips on the same route reaching the destination at the same time or later,
-  // keep only the one that leaves last: there is no point waiting longer at the transfer.
-  function dropDominated(conns) {
-    return conns.filter(c => !conns.some(o => o !== c && o.origin === c.origin && o.destination === c.destination
-      && ms(o.arrives) <= ms(c.arrives) && ms(o.departs) > ms(c.departs)));
+  // Every departure from a stop in the window, whatever the line or direction.
+  async function departuresFrom(stop, start, end) {
+    const body = await vt(`/stop-areas/${stop.gid}/departures`, {
+      startDateTime: localIso(new Date(start)),
+      timeSpanInMinutes: Math.max(1, Math.ceil((end - start) / 60000)),
+      limit: 100,
+    });
+    return (body.results || [])
+      .map(fromDeparture)
+      .filter(l => ms(l.from.planned) >= start && ms(l.from.planned) < end)
+      .sort((a, b) => ms(a.from.time) - ms(b.from.time));
+  }
+
+  // When the journey planner did not return a departure, ask its own stop list when it reaches the transfer stop.
+  const callsCache = new Map();
+  async function arrivalAt(origin, dep, target) {
+    if (!dep.detailsReference) return null;
+    const hit = callsCache.get(dep.detailsReference);
+    if (hit && Date.now() - hit.at < 5 * 60_000) return hit.value;
+    let value = null;
+    try {
+      const body = await vt(`/stop-areas/${origin.gid}/departures/${encodeURIComponent(dep.detailsReference)}/details`, { includes: 'servicejourneycalls' });
+      const calls = body.serviceJourneys?.[0]?.callsOnServiceJourney || [];
+      const c = calls.find(c => c.stopPoint?.stopArea?.gid === target.gid);
+      const planned = c && (c.plannedArrivalTime || c.plannedDepartureTime);
+      if (planned) {
+        const est = c.estimatedArrivalTime || c.estimatedDepartureTime;
+        value = { planned, time: est || planned, realtime: Boolean(est), stop: c.stopPoint?.name || target.name, platform: c.stopPoint?.platform || null };
+      }
+    } catch { /* treated as not passing the stop */ }
+    callsCache.set(dep.detailsReference, { at: Date.now(), value });
+    return value;
+  }
+
+  const byJourney = legs => new Map(legs.filter(l => l.journeyId).map(l => [l.journeyId, l]));
+
+  // Onward options for one first bus: stay on if it goes all the way, else the earliest catchable bus from the transfer stop.
+  function onwardFor(leg, destination, seconds, directs) {
+    const direct = directs.get(leg.journeyId);
+    if (direct) return { destination, direct: true, leg: direct, arrives: direct.to.time, transferMinutes: null };
+    if (!leg.to) return null;
+    const next = seconds.find(s => !s.cancelled && s.journeyId !== leg.journeyId && minutesBetween(leg.to.time, s.from.time) >= TRANSFER_MINUTES);
+    if (!next) return null;
+    return { destination, direct: false, leg: next, arrives: next.to.time, transferMinutes: minutesBetween(leg.to.time, next.from.time) };
   }
 
   async function commute(m, extra) {
@@ -405,29 +447,48 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
     const { start, end } = win;
     // Second legs may leave well after the last first leg.
     const later = end + 90 * 60_000;
-    const boards = [], conns = [];
+    const boards = [];
+    let rows;
     if (m === 'office') {
-      const [second, ...firsts] = await Promise.all([tripsBetween(transfer, home, start, later), ...offices.map(o => tripsBetween(o, transfer, start, end))]);
-      const directs = await Promise.all(offices.map(o => tripsBetween(o, home, start, end).catch(() => [])));
-      offices.forEach((o, i) => {
-        boards.push({ from: o.name, to: transfer.name, trips: firsts[i] });
-        conns.push(...pairUp(firsts[i], second, o.name, home.name));
-        conns.push(...directs[i].map(d => ({ origin: o.name, destination: home.name, legs: [d] })));
+      const [second, ...rest] = await Promise.all([
+        tripsBetween(transfer, home, start, later),
+        ...offices.map(o => tripsBetween(o, transfer, start, end)),
+        ...offices.map(o => tripsBetween(o, home, start, end).catch(() => [])),
+      ]);
+      const firsts = rest.slice(0, offices.length), directs = rest.slice(offices.length);
+      rows = offices.flatMap((o, i) => {
+        const direct = byJourney(directs[i]);
+        // Buses that go straight home without passing the transfer stop get a row too.
+        const legs = [...firsts[i], ...directs[i].filter(d => !firsts[i].some(f => f.journeyId && f.journeyId === d.journeyId)).map(d => ({ ...d, to: null }))];
+        return legs.map(leg => ({ origin: o.name, leg, onward: [onwardFor(leg, home.name, second, direct)].filter(Boolean) }));
       });
+      offices.forEach((o, i) => boards.push({ from: o.name, to: transfer.name, trips: firsts[i] }));
       boards.push({ from: transfer.name, to: home.name, trips: second });
     } else {
-      const [first, ...seconds] = await Promise.all([tripsBetween(home, transfer, start, end), ...offices.map(o => tripsBetween(transfer, o, start, later))]);
-      const directs = await Promise.all(offices.map(o => tripsBetween(home, o, start, end).catch(() => [])));
-      boards.push({ from: home.name, to: transfer.name, trips: first });
-      offices.forEach((o, i) => {
-        boards.push({ from: transfer.name, to: o.name, trips: seconds[i] });
-        conns.push(...pairUp(first, seconds[i], home.name, o.name));
-        conns.push(...directs[i].map(d => ({ origin: home.name, destination: o.name, legs: [d] })));
-      });
+      const [deps, viaTransfer, ...rest] = await Promise.all([
+        departuresFrom(home, start, end).catch(() => null),
+        tripsBetween(home, transfer, start, end),
+        ...offices.map(o => tripsBetween(transfer, o, start, later)),
+        ...offices.map(o => tripsBetween(home, o, start, end).catch(() => [])),
+      ]);
+      const seconds = rest.slice(0, offices.length), directs = rest.slice(offices.length).map(byJourney);
+      const planned = byJourney(viaTransfer);
+      // The departure board lists every bus; the planner's trips tell when most of them reach the transfer stop.
+      const legs = await Promise.all((deps || viaTransfer).map(async d => {
+        const known = planned.get(d.journeyId);
+        if (known) return { ...d, to: known.to };
+        if (d.to) return d;
+        return { ...d, to: await arrivalAt(home, d, transfer) };
+      }));
+      rows = legs.map(leg => ({
+        origin: home.name, leg,
+        onward: offices.map((o, i) => onwardFor(leg, o.name, seconds[i], directs[i])).filter(Boolean),
+      }));
+      boards.push({ from: home.name, to: transfer.name, trips: viaTransfer });
+      offices.forEach((o, i) => boards.push({ from: transfer.name, to: o.name, trips: seconds[i] }));
     }
-    const connections = dropDominated(conns.map(summarise))
-      .sort((a, b) => ms(a.departs) - ms(b.departs) || ms(a.arrives) - ms(b.arrives));
-    return { generatedAt: new Date().toISOString(), window: win, stops: { home: home.name, transfer: transfer.name, office: offices.map(o => o.name) }, connections, boards };
+    rows.sort((a, b) => ms(a.leg.from.time) - ms(b.leg.from.time));
+    return { generatedAt: new Date().toISOString(), window: win, stops: { home: home.name, transfer: transfer.name, office: offices.map(o => o.name) }, rows, boards };
   }
 
   // ---------- Rendering ----------
@@ -478,8 +539,8 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
       ? `<b>${esc(shortStop(s.home))}</b> → ${esc(shortStop(s.transfer))} → <b>${esc(offices)}</b>`
       : `<b>${esc(offices)}</b> → ${esc(shortStop(s.transfer))} → <b>${esc(shortStop(s.home))}</b>`;
     $('subtitle').textContent = demo ? 'Example data' : 'Västtrafik, live';
-    renderHero(data.connections.find(c => !c.legs.some(l => l.cancelled) && minsUntil(c.departs) >= 0));
-    renderTrips(data.connections, data.window);
+    renderHero(data.rows.find(r => !r.leg.cancelled && r.onward.length && minsUntil(r.leg.from.time) >= 0));
+    renderTrips(data.rows, data.window);
     renderBoards(data.boards);
     const age = Math.round((Date.now() - ms(data.generatedAt)) / 60000);
     $('updated').textContent = `Updated ${hhmm(data.generatedAt)}${age >= 2 ? ` (${age} min ago)` : ''}`;
@@ -494,52 +555,67 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
     $('loader-title').textContent = `${from} → ${to}`;
   }
 
-  function renderHero(c) {
+  const best = row => row.onward.reduce((x, o) => !x || ms(o.arrives) < ms(x.arrives) ? o : x, null);
+
+  function renderHero(row) {
     const hero = $('hero');
-    hero.hidden = !c;
-    if (!c) return;
-    const m = minsUntil(c.departs);
-    const legs = c.legs.map(l => `
+    hero.hidden = !row;
+    if (!row) return;
+    const o = best(row), first = row.leg;
+    const m = minsUntil(first.from.time);
+    const legs = (o.direct ? [o.leg] : [first, o.leg]).map(l => `
       <div class="hero-leg">
         ${lineBadge(l)}
-        <div class="where">${esc(shortStop(l.from.stop))} → ${esc(shortStop(l.to.stop))}</div>
+        <div class="where">${esc(shortStop(l.from.stop))} → ${esc(shortStop(l.to?.stop || o.destination))}</div>
         <div class="t">${hhmm(l.from.time)}</div>
       </div>`).join('');
-    const change = c.transferMinutes == null ? 'Direct, no change' : `${c.transferMinutes} min to change at ${esc(shortStop(data.stops.transfer))}`;
+    const change = o.direct ? 'Direct, no change' : `${o.transferMinutes} min to change at ${esc(shortStop(data.stops.transfer))}`;
     hero.innerHTML = `
-      <div class="hero-top"><span>Next trip from ${esc(shortStop(c.legs[0].from.stop))}</span><span>${delayText(c.legs[0].from)}</span></div>
-      <div class="countdown">${m <= 0 ? 'Now' : m >= 60 ? hhmm(c.departs) : `${m}<span>min</span>`}</div>
+      <div class="hero-top"><span>Next trip from ${esc(shortStop(first.from.stop))}</span><span>${delayText(first.from)}</span></div>
+      <div class="countdown">${m <= 0 ? 'Now' : m >= 60 ? hhmm(first.from.time) : `${m}<span>min</span>`}</div>
       <div class="hero-legs">${legs}</div>
-      <div class="hero-foot"><span>${change}</span><span>Arrives ${hhmm(c.arrives)} · ${c.durationMinutes} min</span></div>`;
+      <div class="hero-foot"><span>${change}</span><span>${esc(shortStop(o.destination))} ${hhmm(o.arrives)} · ${minutesBetween(first.from.time, o.arrives)} min</span></div>`;
   }
 
-  const departed = c => ms(c.departs) < Date.now();
+  const departed = row => ms(row.leg.from.time) < Date.now();
 
-  function renderTrips(conns, win) {
+  function depTimeHtml(c, cancelled) {
+    const struck = !cancelled && changed(c) ? `<div class="planned"><s>${hhmm(c.planned)}</s></div>` : '';
+    return `<div class="tt"><span class="t${!cancelled && changed(c) ? ' changed' : ''}">${hhmm(c.time)}</span></div>${struck}`;
+  }
+
+  function hopHtml(o, row) {
+    const arrives = `<span class="hop-arr">${hhmm(o.arrives)}<small>${minutesBetween(row.leg.from.time, o.arrives)} min</small></span>`;
+    if (o.direct) return `<div class="hop">${lineBadge(o.leg)}<span class="hop-what">Stay on to <b>${esc(shortStop(o.destination))}</b></span>${arrives}</div>`;
+    return `<div class="hop">${lineBadge(o.leg)}<span class="hop-what">${hhmm(o.leg.from.time)} to <b>${esc(shortStop(o.destination))}</b>
+      <span class="${o.transferMinutes <= 3 ? 'tight' : ''}">· ${o.transferMinutes} min change</span></span>${arrives}</div>`;
+  }
+
+  function renderTrips(rows, win) {
     const t = n => hhmm(new Date(n).toISOString());
-    $('trips-title').textContent = win.rolling ? `Trips · next ${Math.round((win.end - Date.now()) / 3600000 * 2) / 2} h` : `Trips · ${t(win.start)}–${t(win.end)}`;
-    $('more-label').textContent = `Load later trips (until ${t(win.end + MORE_MINUTES * 60_000)})`;
-    if (!conns.length) { $('trips').innerHTML = '<div class="empty">No trips in this time window.</div>'; return; }
-    const firstUpcoming = conns.findIndex(c => !departed(c));
+    $('trips-title').textContent = win.rolling ? `Departures · next ${Math.round((win.end - Date.now()) / 3600000 * 2) / 2} h` : `Departures · ${t(win.start)}–${t(win.end)}`;
+    $('more-label').textContent = `Load later departures (until ${t(win.end + MORE_MINUTES * 60_000)})`;
+    if (!rows.length) { $('trips').innerHTML = '<div class="empty">No departures in this time window.</div>'; return; }
+    const transfer = shortStop(data.stops.transfer);
+    const firstUpcoming = rows.findIndex(r => !departed(r));
     const nowLine = `<div class="now-divider"><span>Now ${t(Date.now())}</span></div>`;
-    $('trips').innerHTML = conns.map((c, i) => {
-      const cancelled = c.legs.some(l => l.cancelled);
-      const gone = departed(c);
-      const first = c.legs[0], last = c.legs[c.legs.length - 1];
-      const change = c.transferMinutes == null ? 'Direct'
-        : `<span class="${c.transferMinutes <= 3 ? 'tight' : ''}">${c.transferMinutes} min change</span>`;
-      const state = cancelled ? '<span class="cancel">Cancelled</span>' : gone ? '<span class="pill-gone">Departed</span>' : leavesIn(c.departs);
+    $('trips').innerHTML = rows.map((row, i) => {
+      const { leg } = row;
+      const gone = departed(row);
+      const state = leg.cancelled ? '<span class="cancel">Cancelled</span>' : gone ? '<span class="pill-gone">Departed</span>' : leavesIn(leg.from.time);
+      const via = leg.to ? `${esc(transfer)} ${hhmm(leg.to.time)}` : row.onward.some(o => o.direct) ? '' : `Does not stop at ${esc(transfer)}`;
+      const onward = row.onward.length && !leg.cancelled
+        ? `<div class="onward">${row.onward.map(o => hopHtml(o, row)).join('')}</div>`
+        : leg.to && !leg.cancelled ? `<div class="onward"><div class="hop none">No onward bus to catch in time</div></div>` : '';
       return `${i === firstUpcoming && i > 0 ? nowLine : ''}
-        <div class="trip${cancelled ? ' cancelled' : ''}${gone ? ' gone' : ''}">
+        <div class="trip${leg.cancelled ? ' cancelled' : ''}${gone ? ' gone' : ''}${!leg.to && !row.onward.length ? ' elsewhere' : ''}">
           <div class="trip-main">
-            <div class="trip-from">${fromHtml(first.from)}</div>
-            <div class="lines">${c.legs.map(lineBadge).join('')}</div>
-            <div class="trip-note">${state}<span>${change} · ${esc(shortStop(c.destination))}</span></div>
+            <div class="trip-from">${fromHtml(leg.from)}</div>
+            <div class="lines">${lineBadge(leg)}<span class="dir">Towards ${esc(shortStop(leg.direction) || '?')}</span></div>
+            <div class="trip-note">${state}${via ? `<span>${via}</span>` : ''}</div>
           </div>
-          <div class="trip-times">
-            ${timesHtml(first.from, last.to, cancelled)}
-            <div class="dur">Travel time ${c.durationMinutes} min</div>
-          </div>
+          <div class="trip-times">${depTimeHtml(leg.from, leg.cancelled)}</div>
+          ${onward}
         </div>`;
     }).join('') + (firstUpcoming === -1 ? nowLine : '');
   }
@@ -644,29 +720,29 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
   // Example trips relative to now, for trying the page without a key.
   function demoData(m) {
     const at = min => new Date(Date.now() + min * 60000).toISOString();
-    const point = (stop, min, late = 0) => ({ stop, planned: at(min), time: at(min + late), realtime: true, platform: null });
-    const leg = (line, bg, from, to, dep, dur, late = 0) => ({
-      journeyId: null, line, lineName: `Line ${line}`, colors: { bg: '#ffef5c', fg: bg, border: bg }, direction: shortStop(to),
-      cancelled: false, from: point(from, dep, late), to: point(to, dep + dur, late),
+    const point = (stop, min, late = 0) => ({ stop, planned: at(min), time: at(min + late), realtime: true, platform: 'A' });
+    let n = 0;
+    const leg = (line, fg, from, to, dep, dur, late = 0, direction = shortStop(to)) => ({
+      journeyId: `demo-${n++}`, line, lineName: `Line ${line}`, colors: { bg: '#ffef5c', fg, border: fg }, direction,
+      cancelled: false, from: point(from, dep, late), to: to ? point(to, dep + dur, late) : null,
     });
     const H = 'Källarbacken, Göteborg', T = 'Delsjömotet, Göteborg', G = 'Gårdatorget, Göteborg', L = 'Liseberg station, Göteborg';
-    const conn = (origin, destination, legs) => summarise({ origin, destination, legs });
     const stops = { home: H, transfer: T, office: [G, L] };
     const window = { start: Date.now() - 40 * 60000, end: Date.now() + (60 + extra) * 60000, rolling: false };
+    const none = new Map();
     if (m === 'office') {
-      const a1 = leg('50', '#0a5fb4', G, T, 4, 6), a2 = leg('513', '#d6007d', L, T, 7, 8, 1), a3 = leg('50', '#0a5fb4', G, T, 14, 6);
-      const b1 = leg('514', '#00843d', T, H, 13, 5), b2 = leg('514', '#00843d', T, H, 28, 5);
-      const p1 = leg('50', '#0a5fb4', G, T, -11, 6), q1 = leg('514', '#00843d', T, H, -2, 5);
+      const second = [leg('514', '#00843d', T, H, -2, 5), leg('514', '#00843d', T, H, 13, 5), leg('514', '#00843d', T, H, 28, 5)];
+      const firsts = [leg('50', '#0a5fb4', G, T, -11, 6), leg('50', '#0a5fb4', G, T, 4, 6), leg('513', '#d6007d', L, T, 7, 8, 1), leg('50', '#0a5fb4', G, T, 14, 6)];
       return { generatedAt: new Date().toISOString(), stops, window,
-        connections: [conn(G, H, [p1, q1]), conn(G, H, [a1, b1]), conn(L, H, [a2, b1]), conn(G, H, [a3, b2])],
-        boards: [{ from: G, to: T, trips: [a1, a3] }, { from: L, to: T, trips: [a2] }, { from: T, to: H, trips: [b1, b2] }] };
+        rows: firsts.map(f => ({ origin: f.from.stop, leg: f, onward: [onwardFor(f, H, second, none)].filter(Boolean) })),
+        boards: [{ from: G, to: T, trips: firsts }, { from: T, to: H, trips: second }] };
     }
-    const a1 = leg('514', '#00843d', H, T, 5, 5), a2 = leg('514', '#00843d', H, T, 20, 5, 2);
-    const g1 = leg('50', '#0a5fb4', T, G, 13, 7), l1 = leg('513', '#d6007d', T, L, 14, 9), g2 = leg('50', '#0a5fb4', T, G, 29, 7);
-    const p1 = leg('514', '#00843d', H, T, -10, 5), q1 = leg('50', '#0a5fb4', T, G, -3, 7);
+    const toG = [leg('50', '#0a5fb4', T, G, -3, 7), leg('50', '#0a5fb4', T, G, 13, 7), leg('50', '#0a5fb4', T, G, 29, 7)];
+    const toL = [leg('513', '#d6007d', T, L, 14, 9), leg('513', '#d6007d', T, L, 29, 9)];
+    const firsts = [leg('514', '#00843d', H, T, -10, 5), leg('514', '#00843d', H, T, 5, 5), leg('16', '#00843d', H, null, 11, 0, 0, 'Partille'), leg('514', '#00843d', H, T, 20, 5, 2)];
     return { generatedAt: new Date().toISOString(), stops, window,
-      connections: [conn(H, G, [p1, q1]), conn(H, G, [a1, g1]), conn(H, L, [a1, l1]), conn(H, G, [a2, g2])],
-      boards: [{ from: H, to: T, trips: [a1, a2] }, { from: T, to: G, trips: [g1, g2] }, { from: T, to: L, trips: [l1] }] };
+      rows: firsts.map(f => ({ origin: H, leg: f, onward: [onwardFor(f, G, toG, none), onwardFor(f, L, toL, none)].filter(Boolean) })),
+      boards: [{ from: H, to: T, trips: firsts.filter(f => f.to) }, { from: T, to: G, trips: toG }, { from: T, to: L, trips: toL }] };
   }
 
   render();
