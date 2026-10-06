@@ -7,9 +7,9 @@ Landvetter). The other leg has buses every few minutes, so it only gets a small 
 
 - **Home** (default until 10:30, rides 06:00–09:30): every 300 and 430 from Källarbacken towards
   Landvetter or Åkareplatsen, with its arrival at Delsjömotet (or Landvetter for the 430). Under
-  each: the first bus you can catch on to Gårdatorget and Liseberg station.
+  each: the first bus you can catch on to Gårdatorget and Liseberg Station.
 - **Office** (default from 10:30, rides 15:00–17:30): every 300 and 430 from Delsjömotet (or 430
-  from Landvetter) to Källarbacken. Under each: the last bus from Liseberg station or Gårdatorget
+  from Landvetter) to Källarbacken. Under each: the last bus from Liseberg Station or Gårdatorget
   that makes it. A bus home you can no longer reach from work is marked *Too late*. The box at the
   top counts down to when you have to leave the office.
 

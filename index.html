@@ -142,6 +142,7 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
 .hidden-row { display: grid; grid-template-columns: 3.2rem auto minmax(0, 1fr); gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); font-size: .9rem; }
 .hidden-row:last-child { margin-bottom: 8px; }
 .tt-sm { font-weight: 700; }
+.stops-used { margin: 0; font-size: .8rem; color: var(--muted); }
 .hidden-what small { display: block; color: var(--muted); font-size: .8rem; }
 .empty { padding: 16px; color: var(--muted); font-size: .92rem; background: var(--row); }
 
@@ -234,6 +235,7 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
           <summary id="hidden-title">Not shown</summary>
           <div id="hidden-list"></div>
         </details>
+        <p class="stops-used" id="stops-used"></p>
       </div>
       <div class="status">
         <span id="updated">–</span>
@@ -262,13 +264,13 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
   // To pin a stop, replace its name with { gid: '9021014...', name: '...' }.
   const STOPS = {
     home: 'Källarbacken',
-    office: ['Gårdatorget', 'Liseberg station'],
+    office: ['Gårdatorget', 'Liseberg Station'],
   };
   // Where you can change bus between home and work. `to` names the office stops reachable from there
   // (as written in STOPS.office); `lines` limits which home-stop lines go there (omit for any line).
   const TRANSFERS = [
-    { stop: 'Delsjömotet', to: ['Gårdatorget', 'Liseberg station'] },
-    { stop: 'Landvetter', to: ['Liseberg station'], lines: ['430'] },
+    { stop: 'Delsjömotet', to: ['Gårdatorget', 'Liseberg Station'] },
+    { stop: 'Landvetter', to: ['Liseberg Station'], lines: ['430'] },
   ];
 
   const $ = id => document.getElementById(id);
@@ -656,6 +658,7 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
     renderTrips(data.rows, data.window);
     renderBoards(data.boards);
     renderHidden(data.hidden || []);
+    $('stops-used').textContent = `Stops used: ${[s.home, ...s.transfers, ...s.office].join(' · ')}`;
     if (data.warnings?.length) {
       const n = $('notice');
       n.textContent = data.warnings.join(' ');
