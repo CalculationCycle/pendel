@@ -315,7 +315,10 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
     for (let attempt = 0; attempt < 2; attempt++) {
       const res = await fetch(url, { headers: { Authorization: `Bearer ${await getToken()}`, Accept: 'application/json' } });
       if (res.status === 401 && attempt === 0) { token = null; continue; }
-      if (!res.ok) throw new Error(`Västtrafik answered ${res.status} for ${path}.`);
+      if (!res.ok) {
+        const detail = (await res.text().catch(() => '')).replace(/\s+/g, ' ').slice(0, 160);
+        throw Object.assign(new Error(`Västtrafik answered ${res.status} for ${path}${detail ? `: ${detail}` : ''}`), { status: res.status });
+      }
       return res.json();
     }
   }
@@ -422,20 +425,47 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
 
   // Every departure from a stop in the window, whatever the line or direction.
   // Fetched page by page, so a cap on results per request cannot cut the window short.
+  // Ways of asking for a departure board, from most to least specific. Västtrafik has refused some
+  // combinations (a start time in the past, a long time span), so on an error the next one is tried,
+  // and the first that works is used from then on. The last two only cover departures from now on;
+  // the planner's trips fill in the earlier ones.
+  const BOARD_VARIANTS = [
+    (from, end) => ({ startDateTime: localIso(new Date(from)), timeSpanInMinutes: spanMinutes(from, end), limit: 50 }),
+    (from) => ({ startDateTime: localIso(new Date(from)), limit: 50 }),
+    (from, end) => ({ startDateTime: localIso(new Date(from)), timeSpanInMinutes: Math.min(120, spanMinutes(from, end)), limit: 20 }),
+    (from, end) => { const f = Math.max(from, Date.now()); return { startDateTime: localIso(new Date(f)), timeSpanInMinutes: Math.min(120, spanMinutes(f, end)), limit: 20 }; },
+    () => ({ limit: 20 }),
+  ];
+  const spanMinutes = (from, end) => Math.max(1, Math.ceil((end - from) / 60000));
+  let boardVariant = 0;
+
+  async function boardPage(stop, cursor, end, towards) {
+    let lastError;
+    for (let v = boardVariant; v < BOARD_VARIANTS.length; v++) {
+      try {
+        const body = await vt(`/stop-areas/${stop.gid}/departures`, {
+          ...BOARD_VARIANTS[v](cursor, end),
+          ...(towards ? { directionGid: towards.gid } : {}),
+        });
+        boardVariant = v;
+        return body.results || [];
+      } catch (e) {
+        if (!e.status || e.status === 401) throw e;
+        lastError = e;
+      }
+    }
+    throw lastError;
+  }
+
+  // Fetched page by page, so a cap on results per request cannot cut the window short.
   async function departuresFrom(stop, start, end, towards) {
     const seen = new Map();
     let cursor = start;
     for (let page = 0; page < 10 && cursor < end; page++) {
-      const body = await vt(`/stop-areas/${stop.gid}/departures`, {
-        startDateTime: localIso(new Date(cursor)),
-        timeSpanInMinutes: Math.max(1, Math.ceil((end - cursor) / 60000)),
-        limit: 50,
-        ...(towards ? { directionGid: towards.gid } : {}),
-      });
-      const deps = (body.results || []).map(fromDeparture);
+      const deps = (await boardPage(stop, cursor, end, towards)).map(fromDeparture);
       const before = seen.size;
       for (const d of deps) seen.set(`${d.journeyId}|${d.from.planned}`, d);
-      if (seen.size === before) break;
+      if (seen.size === before || boardVariant === BOARD_VARIANTS.length - 1) break;
       const last = Math.max(...deps.map(d => ms(d.from.planned)));
       cursor = last > cursor ? last : cursor + 60_000;
     }
@@ -486,7 +516,11 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
     const [deps, planned] = await Promise.all([board, tripsBetween(from, to, start, end).catch(() => [])]);
     const known = byJourney(planned);
     const skipped = [];
-    const legs = await Promise.all((deps || planned).map(async d => {
+    // The board may only reach back to now, or not answer at all; the planner's trips fill the gaps.
+    const onBoard = new Set((deps || []).map(d => d.journeyId).filter(Boolean));
+    const all = [...(deps || []), ...planned.filter(p => !p.journeyId || !onBoard.has(p.journeyId))]
+      .sort((a, b) => ms(a.from.time) - ms(b.from.time));
+    const legs = await Promise.all(all.map(async d => {
       if (!lineOk(d)) { skipped.push({ leg: d, reason: 'Other line' }); return null; }
       const k = known.get(d.journeyId);
       if (k) return { ...d, to: k.to };
