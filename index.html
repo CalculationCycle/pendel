@@ -245,8 +245,10 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
   // Which rides each view lists by default, by departure from the first stop. "Load more" adds 30 minutes.
   const WINDOWS = { home: ['06:00', '09:30'], office: ['15:00', '17:30'] };
   const MORE_MINUTES = 30;
-  // Lines worth listing from the home stop. Empty means every line.
+  // Departures worth listing from the home stop: these lines, heading for a destination containing
+  // one of these names (matched against the bus's destination sign). Empty means no filter.
   const HOME_LINES = ['300', '430'];
+  const HOME_DIRECTIONS = ['Landvetter', 'Åkareplatsen'];
   // Stop names are looked up once and the matched stop is remembered.
   // To pin a stop, replace its name with { gid: '9021014...', name: '...' }.
   const STOPS = {
@@ -478,7 +480,9 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
       const seconds = rest.slice(0, offices.length), directs = rest.slice(offices.length).map(byJourney);
       const planned = byJourney(viaTransfer);
       // The departure board lists every bus in both directions; the planner's trips tell when most of them reach the transfer stop.
-      const wanted = l => !HOME_LINES.length || HOME_LINES.includes(l.line);
+      const norm = t => String(t || '').toLocaleLowerCase('sv');
+      const wanted = l => (!HOME_LINES.length || HOME_LINES.includes(l.line))
+        && (!HOME_DIRECTIONS.length || HOME_DIRECTIONS.some(d => norm(l.direction).includes(norm(d))));
       const legs = await Promise.all((deps || viaTransfer).filter(wanted).map(async d => {
         const known = planned.get(d.journeyId);
         if (known) return { ...d, to: known.to };
@@ -488,7 +492,9 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
       rows = legs.map(leg => ({
         origin: home.name, leg,
         onward: offices.map((o, i) => onwardFor(leg, o.name, seconds[i], directs[i])).filter(Boolean),
-      })).filter(r => r.leg.to || r.onward.length); // the rest go the other way
+      }));
+      // Without a direction list, a bus that never reaches the transfer stop is going the other way.
+      if (!HOME_DIRECTIONS.length) rows = rows.filter(r => r.leg.to || r.onward.length);
       boards.push({ from: home.name, to: transfer.name, trips: viaTransfer });
       offices.forEach((o, i) => boards.push({ from: transfer.name, to: o.name, trips: seconds[i] }));
     }
