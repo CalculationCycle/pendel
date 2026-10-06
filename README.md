@@ -11,11 +11,11 @@ Rides that have already left stay in the list, greyed out and marked *Departed*,
 before the next one. "Load more" extends the window by 30 minutes. Once a window has passed for the
 day, the view shows the next two hours instead. The windows are `WINDOWS` at the top of the script.
 
-Home lists **every** departure from Källarbacken in the window, straight from the stop's departure
-board, so no bus is left out. Under each one are the onward connections from Delsjömotet to
+Home lists every departure of lines 300 and 430 from Källarbacken towards Delsjömotet in the window
+(`HOME_LINES` in `index.html`), straight from the stop's departure board, so no bus is left out.
+Buses in the other direction are skipped. Under each one are the onward connections from Delsjömotet to
 Gårdatorget and Liseberg station: the earliest bus you can catch with 2 minutes to change
-(`TRANSFER_MINUTES` in `index.html`), or "stay on" when the same bus goes all the way. Buses
-that don't stop at Delsjömotet are listed and marked as such. Office lists every bus from
+(`TRANSFER_MINUTES` in `index.html`), or "stay on" when the same bus goes all the way. Office lists every bus from
 Gårdatorget and Liseberg station towards Delsjömotet, each with its connection home. Realtime
 delays and cancellations are shown, and the page refreshes every 30 seconds.
 

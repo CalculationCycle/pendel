@@ -245,6 +245,8 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
   // Which rides each view lists by default, by departure from the first stop. "Load more" adds 30 minutes.
   const WINDOWS = { home: ['06:00', '09:30'], office: ['15:00', '17:30'] };
   const MORE_MINUTES = 30;
+  // Lines worth listing from the home stop. Empty means every line.
+  const HOME_LINES = ['300', '430'];
   // Stop names are looked up once and the matched stop is remembered.
   // To pin a stop, replace its name with { gid: '9021014...', name: '...' }.
   const STOPS = {
@@ -418,9 +420,11 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
     try {
       const body = await vt(`/stop-areas/${origin.gid}/departures/${encodeURIComponent(dep.detailsReference)}/details`, { includes: 'servicejourneycalls' });
       const calls = body.serviceJourneys?.[0]?.callsOnServiceJourney || [];
-      const c = calls.find(c => c.stopPoint?.stopArea?.gid === target.gid);
+      // Only a call after this one counts: a bus in the other direction has already passed the target.
+      const from = calls.findIndex(c => c.stopPoint?.stopArea?.gid === origin.gid);
+      const c = calls.find((c, i) => i > from && c.stopPoint?.stopArea?.gid === target.gid);
       const planned = c && (c.plannedArrivalTime || c.plannedDepartureTime);
-      if (planned) {
+      if (planned && from >= 0 && ms(planned) >= ms(dep.from.planned)) {
         const est = c.estimatedArrivalTime || c.estimatedDepartureTime;
         value = { planned, time: est || planned, realtime: Boolean(est), stop: c.stopPoint?.name || target.name, platform: c.stopPoint?.platform || null };
       }
@@ -473,8 +477,9 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
       ]);
       const seconds = rest.slice(0, offices.length), directs = rest.slice(offices.length).map(byJourney);
       const planned = byJourney(viaTransfer);
-      // The departure board lists every bus; the planner's trips tell when most of them reach the transfer stop.
-      const legs = await Promise.all((deps || viaTransfer).map(async d => {
+      // The departure board lists every bus in both directions; the planner's trips tell when most of them reach the transfer stop.
+      const wanted = l => !HOME_LINES.length || HOME_LINES.includes(l.line);
+      const legs = await Promise.all((deps || viaTransfer).filter(wanted).map(async d => {
         const known = planned.get(d.journeyId);
         if (known) return { ...d, to: known.to };
         if (d.to) return d;
@@ -483,7 +488,7 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
       rows = legs.map(leg => ({
         origin: home.name, leg,
         onward: offices.map((o, i) => onwardFor(leg, o.name, seconds[i], directs[i])).filter(Boolean),
-      }));
+      })).filter(r => r.leg.to || r.onward.length); // the rest go the other way
       boards.push({ from: home.name, to: transfer.name, trips: viaTransfer });
       offices.forEach((o, i) => boards.push({ from: transfer.name, to: o.name, trips: seconds[i] }));
     }
