@@ -13,8 +13,11 @@ Landvetter). The other leg has buses every few minutes, so it only gets a small 
   that makes it. A bus home you can no longer reach from work is marked *Too late*. The box at the
   top counts down to when you have to leave the office.
 
-Departures come from each stop's departure board, so no bus is left out; a bus's own stop list
-rules out buses going the other way. Rides that have left stay listed, greyed out, with a *Now* line
+Departures come from each stop's departure board, read page by page, so no bus is left out. A bus
+counts as heading the right way when it reaches Delsjömotet (or Landvetter) after Källarbacken, or,
+when that can't be worked out, when its destination sign matches `HOME_DIRECTIONS`. Every other
+departure on the board is listed under "Not shown" at the bottom with the reason, and a warning
+appears if a departure board can't be read. Rides that have left stay listed, greyed out, with a *Now* line
 before the next one, and the page scrolls to it. "Load more" extends the window by 30 minutes. At the
 bottom are the next buses on the easy leg. Delays and cancellations come from Västtrafik's realtime
 data; the page refreshes every 30 seconds.
