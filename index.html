@@ -253,7 +253,7 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
   // trips that really go from one stop to the other, so the direction takes care of itself.
   // On the way home the same legs are used in reverse, as the last leg.
   const FIRST_LEGS = [
-    { via: 'Delsjömotet', lines: ['300', '430'] },
+    { via: 'Delsjömotet', lines: ['300'] },
     { via: 'Landvetter', lines: ['430'] },
   ];
 
@@ -703,13 +703,13 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
     const window = { start: Date.now() - 40 * 60000, end: Date.now() + (60 + extra) * 60000, rolling: false };
     const link = (office, l, from) => ({ office, leg: l, transferMinutes: Math.abs(minutesBetween(from.to.time, l.from.time)) });
     if (m === 'office') {
-      const keys = [leg('300', '#0a5fb4', T, H, -2, 5), leg('430', '#0a5fb4', T, H, 13, 5), leg('300', '#0a5fb4', T, H, 28, 5)];
+      const keys = [leg('300', '#0a5fb4', T, H, -2, 5), leg('300', '#0a5fb4', T, H, 13, 5), leg('300', '#0a5fb4', T, H, 28, 5)];
       const feed = [[leg('50', '#0a5fb4', G, T, -12, 6), leg('X4', '#d6007d', L, T, -13, 8)], [leg('50', '#0a5fb4', G, T, 4, 6), leg('X4', '#d6007d', L, T, 2, 8)], [leg('50', '#0a5fb4', G, T, 19, 6), leg('X4', '#d6007d', L, T, 17, 8)]];
       return { generatedAt: new Date().toISOString(), stops, window,
         rows: keys.map((k, i) => ({ leg: k, keyFrom: T, keyTo: H, via: 'Delsjömotet', links: [{ ...link(L, feed[i][1], feed[i][1]), transferMinutes: minutesBetween(feed[i][1].to.time, k.from.time) }] })),
         boards: [{ from: L, to: T, trips: feed.map(f => f[1]) }] };
     }
-    const keys = [leg('300', '#0a5fb4', H, T, -10, 5), leg('430', '#0a5fb4', H, T, 5, 5, 0, 'Åkareplatsen'), leg('300', '#0a5fb4', H, T, 20, 5, 2, 'Åkareplatsen')];
+    const keys = [leg('300', '#0a5fb4', H, T, -10, 5), leg('300', '#0a5fb4', H, T, 5, 5, 0, 'Åkareplatsen'), leg('300', '#0a5fb4', H, T, 20, 5, 2, 'Åkareplatsen')];
     const on = [[leg('50', '#0a5fb4', T, G, -3, 7), leg('X4', '#d6007d', T, L, -2, 8)], [leg('50', '#0a5fb4', T, G, 13, 7), leg('X4', '#d6007d', T, L, 12, 8)], [leg('50', '#0a5fb4', T, G, 29, 7), leg('X4', '#d6007d', T, L, 31, 8)]];
     return { generatedAt: new Date().toISOString(), stops, window,
       rows: keys.map((k, i) => ({ leg: k, keyFrom: H, keyTo: T, via: 'Delsjömotet', links: [link(L, on[i][1], k)] })),

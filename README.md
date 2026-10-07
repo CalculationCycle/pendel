@@ -4,7 +4,7 @@ A one-page commute dashboard on Västtrafik's open API (Planera Resa v4). Static
 
 Two legs each way:
 
-- **Home → work** (default until 10:30, rides 06:00–09:30): leg 1 is 300 or 430 from Källarbacken to
+- **Home → work** (default until 10:30, rides 06:00–09:30): leg 1 is 300 from Källarbacken to
   Delsjömotet (main), or 430 from Källarbacken to Landvetter (exception). Under each: the first bus
   from there on to Liseberg Station.
 - **Work → home** (default from 10:30, rides 15:00–17:30): the same legs in reverse. Each bus home
