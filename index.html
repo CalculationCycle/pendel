@@ -137,13 +137,7 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
 .linkbtn:disabled { color: var(--muted); cursor: progress; }
 
 .boards { display: grid; gap: 20px; }
-.hidden-deps { background: var(--row); padding: 0 16px; }
-.hidden-deps summary { cursor: pointer; padding: 14px 0; color: var(--accent); font-weight: 600; }
-.hidden-row { display: grid; grid-template-columns: 3.2rem auto minmax(0, 1fr); gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); font-size: .9rem; }
-.hidden-row:last-child { margin-bottom: 8px; }
-.tt-sm { font-weight: 700; }
 .stops-used { margin: 0; font-size: .8rem; color: var(--muted); }
-.hidden-what small { display: block; color: var(--muted); font-size: .8rem; }
 .empty { padding: 16px; color: var(--muted); font-size: .92rem; background: var(--row); }
 
 .status { display: flex; justify-content: space-between; align-items: center; gap: 10px; color: var(--muted); font-size: .84rem; }
@@ -231,10 +225,6 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
           <h2 id="boards-title">Next buses</h2>
           <div class="boards" id="boards"></div>
         </section>
-        <details class="hidden-deps" id="hidden-deps" hidden>
-          <summary id="hidden-title">Not shown</summary>
-          <div id="hidden-list"></div>
-        </details>
         <p class="stops-used" id="stops-used"></p>
       </div>
       <div class="status">
@@ -256,21 +246,15 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
   // Which rides each view lists by default, by departure from the first stop. "Load more" adds 30 minutes.
   const WINDOWS = { home: ['06:00', '09:30'], office: ['15:00', '17:30'] };
   const MORE_MINUTES = 30;
-  // Departures worth listing from the home stop: these lines, heading for a destination containing
-  // one of these names (matched against the bus's destination sign). Empty means no filter.
-  const HOME_LINES = ['300', '430'];
-  const HOME_DIRECTIONS = ['Landvetter', 'Åkareplatsen'];
-  // Stop names are looked up once and the matched stop is remembered.
+  // Stop names are looked up once and the matched stop is remembered (the page footer shows which).
   // To pin a stop, replace its name with { gid: '9021014...', name: '...' }.
-  const STOPS = {
-    home: 'Källarbacken',
-    office: ['Gårdatorget', 'Liseberg Station'],
-  };
-  // Where you can change bus between home and work. `to` names the office stops reachable from there
-  // (as written in STOPS.office); `lines` limits which home-stop lines go there (omit for any line).
-  const TRANSFERS = [
-    { stop: 'Delsjömotet', to: ['Gårdatorget', 'Liseberg Station'] },
-    { stop: 'Landvetter', to: ['Liseberg Station'], lines: ['430'] },
+  const STOPS = { home: 'Källarbacken', work: 'Liseberg Station' };
+  // The first leg from home, main one first. Only direct trips on these lines count, and only
+  // trips that really go from one stop to the other, so the direction takes care of itself.
+  // On the way home the same legs are used in reverse, as the last leg.
+  const FIRST_LEGS = [
+    { via: 'Delsjömotet', lines: ['300', '430'] },
+    { via: 'Landvetter', lines: ['430'] },
   ];
 
   const $ = id => document.getElementById(id);
@@ -379,8 +363,6 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
     for (let page = 0; page < 6 && cursor < end; page++) {
       const body = await vt('/journeys', {
         originGid: from.gid, destinationGid: to.gid, onlyDirectConnections: true,
-        // Buses at a big interchange can leave from a neighbouring stop area a short walk away.
-        includeNearbyStopAreas: true,
         dateTime: localIso(new Date(cursor)), limit: 20,
       });
       const legs = (body.results || [])
@@ -407,233 +389,54 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
     return { start: Date.now() - 15 * 60_000, end: Date.now() + (120 + extra) * 60_000, rolling: true };
   }
 
-  // A departure from a stop's departure board, in the same shape as a journey leg (arrival still unknown).
-  function fromDeparture(d) {
-    const sj = d.serviceJourney || {}, line = sj.line || {};
-    return {
-      journeyId: sj.gid || null,
-      detailsReference: d.detailsReference || null,
-      line: line.shortName || line.designation || line.name || '?',
-      lineName: line.name || null,
-      colors: { bg: line.backgroundColor || null, fg: line.foregroundColor || null, border: line.borderColor || null },
-      direction: sj.direction || sj.directionDetails?.shortDirection || null,
-      cancelled: Boolean(d.isCancelled || d.isPartCancelled),
-      from: call(d),
-      to: null,
-    };
-  }
-
-  // Every departure from a stop in the window, whatever the line or direction.
-  // Fetched page by page, so a cap on results per request cannot cut the window short.
-  // Ways of asking for a departure board, from most to least specific. Västtrafik has refused some
-  // combinations (a start time in the past, a long time span), so on an error the next one is tried,
-  // and the first that works is used from then on. The last two only cover departures from now on;
-  // the planner's trips fill in the earlier ones.
-  const BOARD_VARIANTS = [
-    (from, end) => ({ startDateTime: localIso(new Date(from)), timeSpanInMinutes: spanMinutes(from, end), limit: 50 }),
-    (from) => ({ startDateTime: localIso(new Date(from)), limit: 50 }),
-    (from, end) => ({ startDateTime: localIso(new Date(from)), timeSpanInMinutes: Math.min(120, spanMinutes(from, end)), limit: 20 }),
-    (from, end) => { const f = Math.max(from, Date.now()); return { startDateTime: localIso(new Date(f)), timeSpanInMinutes: Math.min(120, spanMinutes(f, end)), limit: 20 }; },
-    () => ({ limit: 20 }),
-  ];
-  const spanMinutes = (from, end) => Math.max(1, Math.ceil((end - from) / 60000));
-  let boardVariant = 0;
-
-  async function boardPage(stop, cursor, end, towards) {
-    let lastError;
-    for (let v = boardVariant; v < BOARD_VARIANTS.length; v++) {
-      try {
-        const body = await vt(`/stop-areas/${stop.gid}/departures`, {
-          ...BOARD_VARIANTS[v](cursor, end),
-          ...(towards ? { directionGid: towards.gid } : {}),
-        });
-        boardVariant = v;
-        return body.results || [];
-      } catch (e) {
-        if (!e.status || e.status === 401) throw e;
-        lastError = e;
-      }
-    }
-    throw lastError;
-  }
-
-  // Fetched page by page, so a cap on results per request cannot cut the window short.
-  async function departuresFrom(stop, start, end, towards) {
-    const seen = new Map();
-    let cursor = start;
-    for (let page = 0; page < 10 && cursor < end; page++) {
-      const deps = (await boardPage(stop, cursor, end, towards)).map(fromDeparture);
-      const before = seen.size;
-      for (const d of deps) seen.set(`${d.journeyId}|${d.from.planned}`, d);
-      if (seen.size === before || boardVariant === BOARD_VARIANTS.length - 1) break;
-      const last = Math.max(...deps.map(d => ms(d.from.planned)));
-      cursor = last > cursor ? last : cursor + 60_000;
-    }
-    return [...seen.values()]
-      .filter(l => ms(l.from.planned) >= start && ms(l.from.planned) < end)
-      .sort((a, b) => ms(a.from.time) - ms(b.from.time));
-  }
-
-  // A bus's own list of stops, for when the journey planner did not return it.
-  const callsCache = new Map();
-  async function callsOf(origin, dep) {
-    if (!dep.detailsReference) return [];
-    const hit = callsCache.get(dep.detailsReference);
-    if (hit && Date.now() - hit.at < 5 * 60_000) return hit.value;
-    let value = [];
-    try {
-      const body = await vt(`/stop-areas/${origin.gid}/departures/${encodeURIComponent(dep.detailsReference)}/details`, { includes: 'servicejourneycalls' });
-      value = body.serviceJourneys?.[0]?.callsOnServiceJourney || [];
-    } catch { /* treated as stopping nowhere useful */ }
-    callsCache.set(dep.detailsReference, { at: Date.now(), value });
-    return value;
-  }
-
-  // When the bus reaches target after leaving origin. A bus in the other direction has already passed it.
-  function arrivalIn(calls, origin, target, dep) {
-    const from = calls.findIndex(c => c.stopPoint?.stopArea?.gid === origin.gid);
-    if (from < 0) return null;
-    const c = calls.find((c, i) => i > from && c.stopPoint?.stopArea?.gid === target.gid);
-    const planned = c && (c.plannedArrivalTime || c.plannedDepartureTime);
-    if (!planned || ms(planned) < ms(dep.from.planned)) return null;
-    const est = c.estimatedArrivalTime || c.estimatedDepartureTime;
-    return { planned, time: est || planned, realtime: Boolean(est), stop: c.stopPoint?.name || target.name, platform: c.stopPoint?.platform || null };
-  }
-
-  const byJourney = legs => new Map(legs.filter(l => l.journeyId).map(l => [l.journeyId, l]));
-  const usesTransfer = (t, leg) => !t.lines || t.lines.includes(leg.line);
   const norm = t => String(t || '').toLocaleLowerCase('sv');
-  const homeLine = l => !HOME_LINES.length || HOME_LINES.includes(l.line);
-  const towardsTown = l => !HOME_DIRECTIONS.length || HOME_DIRECTIONS.some(d => norm(l.direction).includes(norm(d)));
+  const onLines = lines => leg => !lines?.length || lines.includes(leg.line);
 
-  // The key leg: every bus on the departure board at `from` that goes on to reach `to`, with its arrival.
-  // The planner's trips give most arrivals; the rest come from the bus's own stop list, which also
-  // rules out buses heading the other way.
-  // A bus whose arrival cannot be worked out is still kept when its destination sign says it is
-  // heading the right way (`signOk`), with the arrival left unknown. Everything left out is
-  // reported in `skipped` with the reason.
-  async function keyLegs(board, from, to, start, end, lineOk, signOk) {
-    const [deps, planned] = await Promise.all([board, tripsBetween(from, to, start, end).catch(() => [])]);
-    const known = byJourney(planned);
-    const skipped = [];
-    // The board may only reach back to now, or not answer at all; the planner's trips fill the gaps.
-    const onBoard = new Set((deps || []).map(d => d.journeyId).filter(Boolean));
-    const all = [...(deps || []), ...planned.filter(p => !p.journeyId || !onBoard.has(p.journeyId))]
-      .sort((a, b) => ms(a.from.time) - ms(b.from.time));
-    const legs = await Promise.all(all.map(async d => {
-      if (!lineOk(d)) { skipped.push({ leg: d, reason: 'Other line' }); return null; }
-      const k = known.get(d.journeyId);
-      if (k) return { ...d, to: k.to };
-      if (d.to) return d;
-      const at = arrivalIn(await callsOf(from, d), from, to, d);
-      if (at) return { ...d, to: at };
-      if (signOk?.(d)) return { ...d, to: null };
-      skipped.push({ leg: d, reason: `Does not reach ${shortStop(to.name)} after this stop` });
-      return null;
-    }));
-    return { legs: legs.filter(Boolean), skipped };
-  }
-
-  // Departures a board listed that did not become a row, with every reason given for leaving them out.
-  function notShown(results, rows, stopName) {
-    const listed = new Set(rows.map(r => `${r.leg.journeyId}|${r.leg.from.planned}`));
-    const out = new Map();
-    for (const { skipped } of results) {
-      for (const { leg, reason } of skipped) {
-        const key = `${leg.journeyId}|${leg.from.planned}`;
-        if (listed.has(key)) continue;
-        if (!out.has(key)) out.set(key, { leg, stop: stopName, reasons: new Set() });
-        out.get(key).reasons.add(reason);
-      }
-    }
-    // "Other line" only matters when nothing else was said: a line can be meant for one transfer stop and not another.
-    return [...out.values()].map(h => ({ ...h, reasons: h.reasons.size > 1 ? [...h.reasons].filter(r => r !== 'Other line') : [...h.reasons] })).sort((a, b) => ms(a.leg.from.time) - ms(b.leg.from.time));
-  }
-
-  // The easy leg: the planner's direct trips, or if it finds none, the departure board's buses
-  // heading for `to` (arrival unknown).
-  async function easyLeg(from, to, start, end) {
-    const trips = await tripsBetween(from, to, start, end).catch(() => []);
-    if (trips.length) return trips;
-    return departuresFrom(from, start, end, to).catch(() => []);
-  }
-
+  // Home: leg 1 from Källarbacken to each FIRST_LEGS stop, each with the first bus on to work.
+  // Office: the same legs back to Källarbacken, each with the last bus from work that makes it.
   async function commute(m, extra) {
-    const [home, ...offices] = await Promise.all([STOPS.home, ...STOPS.office].map(resolveStop));
-    const transfers = await Promise.all(TRANSFERS.map(async t => ({
-      ...t,
-      stop: await resolveStop(t.stop),
-      officeIdx: STOPS.office.map((o, i) => t.to.includes(typeof o === 'object' ? o.name : o) ? i : -1).filter(i => i >= 0),
-    })));
+    const [home, work, ...vias] = await Promise.all([STOPS.home, STOPS.work, ...FIRST_LEGS.map(l => l.via)].map(resolveStop));
     const win = windowFor(m, extra);
     const { start, end } = win;
-    const boards = [];
-    const rows = [];
-    const warnings = [];
-    let hidden = [];
+    const rows = [], boards = [];
 
     if (m === 'home') {
-      // Key leg: Källarbacken → transfer stop. Then any of the frequent buses on to an office stop.
-      const board = departuresFrom(home, start, end).catch(e => {
-        warnings.push(`Could not read the departure board at ${shortStop(home.name)} (${e.message}), so some buses may be missing.`);
-        return null;
-      });
       const later = end + 90 * 60_000;
-      const [keys, onward] = await Promise.all([
-        Promise.all(transfers.map(t => keyLegs(board, home, t.stop, start, end, l => homeLine(l) && usesTransfer(t, l), towardsTown))),
-        Promise.all(transfers.map(t => Promise.all(t.officeIdx.map(oi => easyLeg(t.stop, offices[oi], start, later))))),
+      const [firsts, onward] = await Promise.all([
+        Promise.all(FIRST_LEGS.map((l, i) => tripsBetween(home, vias[i], start, end).then(t => t.filter(onLines(l.lines))))),
+        Promise.all(vias.map(v => tripsBetween(v, work, start, later))),
       ]);
-      // A bus reaching several transfer stops is listed once: for the first stop in TRANSFERS
-      // where its arrival is known, else the first where it was kept on its destination sign.
-      const pick = new Map();
-      transfers.forEach((t, ti) => {
-        for (const leg of keys[ti].legs) {
-          const key = `${leg.journeyId}|${leg.from.planned}`;
-          const had = pick.get(key);
-          if (!had || (!had.leg.to && leg.to)) pick.set(key, { leg, ti });
+      FIRST_LEGS.forEach((l, i) => {
+        for (const leg of firsts[i]) {
+          const next = onward[i].find(s => !s.cancelled && s.journeyId !== leg.journeyId && minutesBetween(leg.to.time, s.from.time) >= TRANSFER_MINUTES);
+          const links = next ? [{ office: work.name, leg: next, transferMinutes: minutesBetween(leg.to.time, next.from.time) }] : [];
+          rows.push({ leg, keyFrom: home.name, keyTo: vias[i].name, via: shortStop(vias[i].name), links });
         }
+        boards.push({ from: vias[i].name, to: work.name, trips: onward[i] });
       });
-      transfers.forEach((t, ti) => {
-        const via = shortStop(t.stop.name);
-        for (const { leg } of [...pick.values()].filter(p => p.ti === ti)) {
-          const links = !leg.to ? [] : t.officeIdx.map((oi, k) => {
-            const next = onward[ti][k].find(s => !s.cancelled && s.journeyId !== leg.journeyId && minutesBetween(leg.to.time, s.from.time) >= TRANSFER_MINUTES);
-            return next && { office: offices[oi].name, leg: next, transferMinutes: minutesBetween(leg.to.time, next.from.time) };
-          }).filter(Boolean);
-          rows.push({ leg, keyFrom: home.name, keyTo: t.stop.name, via, links });
-        }
-        t.officeIdx.forEach((oi, k) => boards.push({ from: t.stop.name, to: offices[oi].name, trips: onward[ti][k] }));
-      });
-      hidden = notShown(keys, rows, home.name);
     } else {
-      // Key leg: transfer stop → Källarbacken. Before it, the latest bus from an office stop that makes it.
       const earlier = start - 60 * 60_000;
-      const [keys, feeders] = await Promise.all([
-        Promise.all(transfers.map(t => keyLegs(departuresFrom(t.stop, start, end).catch(e => {
-          warnings.push(`Could not read the departure board at ${shortStop(t.stop.name)} (${e.message}), so some buses may be missing.`);
-          return null;
-        }), t.stop, home, start, end, l => homeLine(l) && usesTransfer(t, l)))),
-        Promise.all(transfers.map(t => Promise.all(t.officeIdx.map(oi => easyLeg(offices[oi], t.stop, earlier, end))))),
+      const [lasts, feeders] = await Promise.all([
+        Promise.all(FIRST_LEGS.map((l, i) => tripsBetween(vias[i], home, start, end).then(t => t.filter(onLines(l.lines))))),
+        Promise.all(vias.map(v => tripsBetween(work, v, earlier, end))),
       ]);
-      transfers.forEach((t, ti) => {
-        const via = shortStop(t.stop.name);
-        for (const leg of keys[ti].legs) {
-          const links = t.officeIdx.map((oi, k) => {
-            const ok = feeders[ti][k].filter(f => !f.cancelled && f.to && f.journeyId !== leg.journeyId && minutesBetween(f.to.time, leg.from.time) >= TRANSFER_MINUTES);
-            const last = ok[ok.length - 1];
-            return last && { office: offices[oi].name, leg: last, transferMinutes: minutesBetween(last.to.time, leg.from.time) };
-          }).filter(Boolean);
-          rows.push({ leg, keyFrom: t.stop.name, keyTo: home.name, via, links });
+      FIRST_LEGS.forEach((l, i) => {
+        for (const leg of lasts[i]) {
+          const ok = feeders[i].filter(f => !f.cancelled && f.journeyId !== leg.journeyId && minutesBetween(f.to.time, leg.from.time) >= TRANSFER_MINUTES);
+          const last = ok[ok.length - 1];
+          const links = last ? [{ office: work.name, leg: last, transferMinutes: minutesBetween(last.to.time, leg.from.time) }] : [];
+          rows.push({ leg, keyFrom: vias[i].name, keyTo: home.name, via: shortStop(vias[i].name), links });
         }
-        t.officeIdx.forEach((oi, k) => boards.push({ from: offices[oi].name, to: t.stop.name, trips: feeders[ti][k] }));
+        boards.push({ from: work.name, to: vias[i].name, trips: feeders[i] });
       });
-      hidden = transfers.flatMap((t, ti) => notShown([keys[ti]], rows, t.stop.name))
-        .filter(h => homeLine(h.leg)); // the transfer stops are busy; only the lines that matter
     }
-    rows.sort((a, b) => ms(a.leg.from.time) - ms(b.leg.from.time));
+    // A bus that is a direct trip to more than one FIRST_LEGS stop is listed once, for the first.
+    const seen = new Set();
+    const unique = rows.filter(r => { const k = `${r.leg.journeyId}|${r.leg.from.planned}`; if (seen.has(k)) return false; seen.add(k); return true; });
+    unique.sort((a, b) => ms(a.leg.from.time) - ms(b.leg.from.time));
     return {
-      generatedAt: new Date().toISOString(), window: win, rows, boards, warnings, hidden,
-      stops: { home: home.name, transfers: transfers.map(t => t.stop.name), office: offices.map(o => o.name) },
+      generatedAt: new Date().toISOString(), window: win, rows: unique, boards,
+      stops: { home: home.name, transfers: vias.map(v => v.name), office: [work.name] },
     };
   }
 
@@ -691,20 +494,14 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
     renderHero(data.rows);
     renderTrips(data.rows, data.window);
     renderBoards(data.boards);
-    renderHidden(data.hidden || []);
     $('stops-used').textContent = `Stops used: ${[s.home, ...s.transfers, ...s.office].join(' · ')}`;
-    if (data.warnings?.length) {
-      const n = $('notice');
-      n.textContent = data.warnings.join(' ');
-      n.classList.add('error'); n.hidden = false;
-    }
     const age = Math.round((Date.now() - ms(data.generatedAt)) / 60000);
     $('updated').textContent = `Updated ${hhmm(data.generatedAt)}${age >= 2 ? ` (${age} min ago)` : ''}`;
   }
 
   function renderLoader() {
     const name = s => shortStop(typeof s === 'object' ? s.name : s);
-    const via = TRANSFERS.map(t => name(t.stop)).join(' / ');
+    const via = FIRST_LEGS.map(l => name(l.via)).join(' / ');
     $('updated').textContent = '';
     $('loader-label').textContent = `${mode === 'home' ? 'Home' : 'Office'} · finding buses`;
     $('loader-title').textContent = mode === 'home' ? `${name(STOPS.home)} → ${via}` : `${via} → ${name(STOPS.home)}`;
@@ -797,19 +594,6 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
           ${links}
         </div>`;
     }).join('') + (firstUpcoming === -1 ? nowLine : '');
-  }
-
-  function renderHidden(hidden) {
-    const box = $('hidden-deps');
-    box.hidden = !hidden.length;
-    if (!hidden.length) return;
-    const stops = [...new Set(hidden.map(h => shortStop(h.stop)))].join(' and ');
-    $('hidden-title').textContent = `Not shown: ${hidden.length} other departure${hidden.length === 1 ? '' : 's'} from ${stops}`;
-    $('hidden-list').innerHTML = hidden.map(h => `
-      <div class="hidden-row">
-        <span class="tt-sm">${hhmm(h.leg.from.time)}</span>${lineBadge(h.leg)}
-        <span class="hidden-what">Towards ${esc(shortStop(h.leg.direction) || '?')}<small>${esc(h.reasons.join(' · '))}</small></span>
-      </div>`).join('');
   }
 
   const upcoming = trips => trips.filter(t => ms(t.from.time) >= Date.now() - 60_000);
@@ -914,22 +698,22 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
       journeyId: `demo-${n++}`, line, lineName: `Line ${line}`, colors: { bg: '#ffef5c', fg, border: fg }, direction,
       cancelled: false, from: point(from, dep, late), to: point(to, dep + dur, late),
     });
-    const H = 'Källarbacken, Göteborg', T = 'Delsjömotet, Göteborg', G = 'Gårdatorget, Göteborg', L = 'Liseberg station, Göteborg';
-    const stops = { home: H, transfers: [T], office: [G, L] };
+    const H = 'Källarbacken, Göteborg', T = 'Delsjömotet, Göteborg', L = 'Liseberg Station, Göteborg', G = 'Gårdatorget, Göteborg';
+    const stops = { home: H, transfers: [T], office: [L] };
     const window = { start: Date.now() - 40 * 60000, end: Date.now() + (60 + extra) * 60000, rolling: false };
     const link = (office, l, from) => ({ office, leg: l, transferMinutes: Math.abs(minutesBetween(from.to.time, l.from.time)) });
     if (m === 'office') {
       const keys = [leg('300', '#0a5fb4', T, H, -2, 5), leg('430', '#0a5fb4', T, H, 13, 5), leg('300', '#0a5fb4', T, H, 28, 5)];
       const feed = [[leg('50', '#0a5fb4', G, T, -12, 6), leg('X4', '#d6007d', L, T, -13, 8)], [leg('50', '#0a5fb4', G, T, 4, 6), leg('X4', '#d6007d', L, T, 2, 8)], [leg('50', '#0a5fb4', G, T, 19, 6), leg('X4', '#d6007d', L, T, 17, 8)]];
       return { generatedAt: new Date().toISOString(), stops, window,
-        rows: keys.map((k, i) => ({ leg: k, keyFrom: T, keyTo: H, via: 'Delsjömotet', links: [link(G, feed[i][0], feed[i][0]), link(L, feed[i][1], feed[i][1])].map((x, j) => ({ ...x, transferMinutes: minutesBetween(feed[i][j].to.time, k.from.time) })) })),
-        boards: [{ from: G, to: T, trips: feed.map(f => f[0]) }, { from: L, to: T, trips: feed.map(f => f[1]) }] };
+        rows: keys.map((k, i) => ({ leg: k, keyFrom: T, keyTo: H, via: 'Delsjömotet', links: [{ ...link(L, feed[i][1], feed[i][1]), transferMinutes: minutesBetween(feed[i][1].to.time, k.from.time) }] })),
+        boards: [{ from: L, to: T, trips: feed.map(f => f[1]) }] };
     }
     const keys = [leg('300', '#0a5fb4', H, T, -10, 5), leg('430', '#0a5fb4', H, T, 5, 5, 0, 'Åkareplatsen'), leg('300', '#0a5fb4', H, T, 20, 5, 2, 'Åkareplatsen')];
     const on = [[leg('50', '#0a5fb4', T, G, -3, 7), leg('X4', '#d6007d', T, L, -2, 8)], [leg('50', '#0a5fb4', T, G, 13, 7), leg('X4', '#d6007d', T, L, 12, 8)], [leg('50', '#0a5fb4', T, G, 29, 7), leg('X4', '#d6007d', T, L, 31, 8)]];
     return { generatedAt: new Date().toISOString(), stops, window,
-      rows: keys.map((k, i) => ({ leg: k, keyFrom: H, keyTo: T, via: 'Delsjömotet', links: [link(G, on[i][0], k), link(L, on[i][1], k)] })),
-      boards: [{ from: T, to: G, trips: on.map(o => o[0]) }, { from: T, to: L, trips: on.map(o => o[1]) }] };
+      rows: keys.map((k, i) => ({ leg: k, keyFrom: H, keyTo: T, via: 'Delsjömotet', links: [link(L, on[i][1], k)] })),
+      boards: [{ from: T, to: L, trips: on.map(o => o[1]) }] };
   }
 
   render();

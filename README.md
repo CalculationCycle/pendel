@@ -2,28 +2,21 @@
 
 A one-page commute dashboard on Västtrafik's open API (Planera Resa v4). Static, so it runs on GitHub Pages.
 
-The page is built around the leg that matters, the bus between Källarbacken and Delsjömotet (or
-Landvetter). The other leg has buses every few minutes, so it only gets a small line.
+Two legs each way:
 
-- **Home** (default until 10:30, rides 06:00–09:30): every 300 and 430 from Källarbacken towards
-  Landvetter or Åkareplatsen, with its arrival at Delsjömotet (or Landvetter for the 430). Under
-  each: the first bus you can catch on to Gårdatorget and Liseberg Station.
-- **Office** (default from 10:30, rides 15:00–17:30): every 300 and 430 from Delsjömotet (or 430
-  from Landvetter) to Källarbacken. Under each: the last bus from Liseberg Station or Gårdatorget
-  that makes it. A bus home you can no longer reach from work is marked *Too late*. The box at the
-  top counts down to when you have to leave the office.
+- **Home → work** (default until 10:30, rides 06:00–09:30): leg 1 is 300 or 430 from Källarbacken to
+  Delsjömotet (main), or 430 from Källarbacken to Landvetter (exception). Under each: the first bus
+  from there on to Liseberg Station.
+- **Work → home** (default from 10:30, rides 15:00–17:30): the same legs in reverse. Each bus home
+  shows the last bus from Liseberg Station that makes it; one you can no longer reach is marked
+  *Too late*, and the box at the top counts down to when you have to leave work.
 
-Departures come from each stop's departure board, read page by page, so no bus is left out. A bus
-counts as heading the right way when it reaches Delsjömotet (or Landvetter) after Källarbacken, or,
-when that can't be worked out, when its destination sign matches `HOME_DIRECTIONS`. Every other
-departure on the board is listed under "Not shown" at the bottom with the reason, and a warning
-appears if a departure board can't be read. Rides that have left stay listed, greyed out, with a *Now* line
-before the next one, and the page scrolls to it. "Load more" extends the window by 30 minutes. At the
-bottom are the next buses on the easy leg. Delays and cancellations come from Västtrafik's realtime
-data; the page refreshes every 30 seconds.
+Every trip comes from Västtrafik's journey planner, asked for direct trips between the two stops, so
+only buses that actually go that way are listed. Rides that have left stay listed, greyed out, with
+a *Now* line before the next one, and the page scrolls to it. "Load more" extends the window by 30
+minutes. The footer shows which stops the names matched.
 
-Settings at the top of the script: `WINDOWS`, `TRANSFER_MINUTES` (2), `HOME_LINES`,
-`HOME_DIRECTIONS`, `STOPS` and `TRANSFERS`.
+Settings at the top of the script: `STOPS`, `FIRST_LEGS`, `WINDOWS`, `TRANSFER_MINUTES` (2).
 
 ## Publish
 
@@ -37,5 +30,5 @@ On first open the page asks for a Västtrafik key and secret. Create an applicat
 <https://developer.vasttrafik.se> and subscribe it to **Planera Resa v4**. The key is stored in
 that browser's localStorage only, never in the repo. "Change key" at the bottom clears it.
 
-Stops are matched by name on first load and remembered. If a name matches the wrong stop, pin it
-in `STOPS` at the top of the script as `{ gid: '9021014…', name: '…' }`.
+Stops are matched by name on first load and remembered; the footer shows the matches. If a name
+matches the wrong stop, pin it in `STOPS` or `FIRST_LEGS` as `{ gid: '9021014…', name: '…' }`.
