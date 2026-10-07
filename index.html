@@ -360,7 +360,8 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
   async function tripsBetween(from, to, start, end) {
     const seen = new Map();
     let cursor = start;
-    for (let page = 0; page < 6 && cursor < end; page++) {
+    // Busy stretches come back a few trips per page, so allow enough pages to reach the end.
+    for (let page = 0; page < 25 && cursor < end; page++) {
       const body = await vt('/journeys', {
         originGid: from.gid, destinationGid: to.gid, onlyDirectConnections: true,
         dateTime: localIso(new Date(cursor)), limit: 20,
@@ -401,10 +402,12 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
     const rows = [], boards = [];
 
     if (m === 'home') {
+      // Onward buses only matter from shortly before now; buses already gone need no connection.
       const later = end + 90 * 60_000;
+      const onwardFrom = Math.min(Math.max(start, Date.now() - 60 * 60_000), later);
       const [firsts, onward] = await Promise.all([
         Promise.all(FIRST_LEGS.map((l, i) => tripsBetween(home, vias[i], start, end).then(t => t.filter(onLines(l.lines))))),
-        Promise.all(vias.map(v => tripsBetween(v, work, start, later))),
+        Promise.all(vias.map(v => tripsBetween(v, work, onwardFrom, later))),
       ]);
       FIRST_LEGS.forEach((l, i) => {
         for (const leg of firsts[i]) {
@@ -415,7 +418,7 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
         boards.push({ from: vias[i].name, to: work.name, trips: onward[i] });
       });
     } else {
-      const earlier = start - 60 * 60_000;
+      const earlier = Math.max(start, Date.now()) - 60 * 60_000;
       const [lasts, feeders] = await Promise.all([
         Promise.all(FIRST_LEGS.map((l, i) => tripsBetween(vias[i], home, start, end).then(t => t.filter(onLines(l.lines))))),
         Promise.all(vias.map(v => tripsBetween(work, v, earlier, end))),
@@ -424,7 +427,10 @@ section > h2 { font: 700 .95rem/1.2 var(--f-body); margin: 0 0 8px; }
         for (const leg of lasts[i]) {
           const ok = feeders[i].filter(f => !f.cancelled && f.journeyId !== leg.journeyId && minutesBetween(f.to.time, leg.from.time) >= TRANSFER_MINUTES);
           const last = ok[ok.length - 1];
-          const links = last ? [{ office: work.name, leg: last, transferMinutes: minutesBetween(last.to.time, leg.from.time) }] : [];
+          // Only name the last bus from work if the trips fetched reach past this bus home;
+          // otherwise a later one may simply not have been fetched.
+          const covered = feeders[i].some(f => ms(f.from.time) >= ms(leg.from.time));
+          const links = last && covered ? [{ office: work.name, leg: last, transferMinutes: minutesBetween(last.to.time, leg.from.time) }] : [];
           rows.push({ leg, keyFrom: vias[i].name, keyTo: home.name, via: shortStop(vias[i].name), links });
         }
         boards.push({ from: work.name, to: vias[i].name, trips: feeders[i] });
